@@ -1,6 +1,5 @@
 extends Node3D
 
-const GRID_STEP := 1.0
 const TILE_SIZE := 1.0
 const TERRAIN_Y := 0.0
 const RESOURCE_Y := 0.035
@@ -29,6 +28,33 @@ const RESOURCE_TEXTURES := {
 	"coal": "res://assets/images/resource_coal.png",
 }
 
+const TERRAIN_BLEND_SHADER := """
+shader_type spatial;
+render_mode cull_disabled;
+
+uniform sampler2D ground_texture : source_color, repeat_enable;
+uniform sampler2D stone_texture : source_color, repeat_enable;
+uniform sampler2D water_texture : source_color, repeat_enable;
+
+varying vec3 terrain_weight;
+
+void vertex() {
+	terrain_weight = COLOR.rgb;
+}
+
+void fragment() {
+	vec2 tile_uv = fract(UV);
+	vec3 ground = texture(ground_texture, tile_uv).rgb;
+	vec3 stone = texture(stone_texture, tile_uv).rgb;
+	vec3 water = texture(water_texture, tile_uv).rgb;
+	vec3 weights = max(terrain_weight, vec3(0.0));
+	float total = max(weights.r + weights.g + weights.b, 0.001);
+	weights /= total;
+	ALBEDO = ground * weights.r + stone * weights.g + water * weights.b;
+	ROUGHNESS = 0.92;
+}
+"""
+
 var _map_root: Node3D
 
 
@@ -41,91 +67,128 @@ func build_from_sim(sim: NeptuneSim) -> void:
 	add_child(_map_root)
 
 	var tiles: Array = sim.map_tiles()
-	_add_terrain_batches(tiles)
+	_add_terrain(tiles)
 	_add_resources(tiles)
-	_add_grid(_bounds_for_tiles(tiles))
 
 
-func _add_grid(bounds: Rect2i) -> void:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = Color(0.26, 0.32, 0.30, 0.55)
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-
-	var mesh := ImmediateMesh.new()
-	mesh.surface_begin(Mesh.PRIMITIVE_LINES, material)
-
-	var min_x := float(bounds.position.x) - 0.5
-	var max_x := float(bounds.end.x) - 0.5
-	var min_z := float(bounds.position.y) - 0.5
-	var max_z := float(bounds.end.y) - 0.5
-	var x := min_x
-	while x <= max_x + 0.01:
-		mesh.surface_add_vertex(Vector3(x, 0.018, min_z))
-		mesh.surface_add_vertex(Vector3(x, 0.018, max_z))
-		x += GRID_STEP
-
-	var z := min_z
-	while z <= max_z + 0.01:
-		mesh.surface_add_vertex(Vector3(min_x, 0.018, z))
-		mesh.surface_add_vertex(Vector3(max_x, 0.018, z))
-		z += GRID_STEP
-
-	mesh.surface_end()
-
-	var grid := MeshInstance3D.new()
-	grid.name = "TileGrid"
-	grid.mesh = mesh
-	_map_root.add_child(grid)
-
-
-func _add_terrain_batches(tiles: Array) -> void:
-	for terrain_id: String in TERRAIN_COLORS.keys():
-		var mesh := _terrain_mesh(tiles, terrain_id)
-		if mesh == null:
-			continue
-
-		var instance := MeshInstance3D.new()
-		instance.name = "Terrain_%s" % terrain_id
-		instance.mesh = mesh
-		instance.material_override = _terrain_material(terrain_id)
-		_map_root.add_child(instance)
-
-
-func _terrain_mesh(tiles: Array, terrain_id: String) -> ImmediateMesh:
-	var has_tiles := false
+func _add_terrain(tiles: Array) -> void:
+	var terrain_by_pos := {}
 	for raw_tile: Variant in tiles:
 		var tile: Dictionary = raw_tile
-		if tile["terrain"] == terrain_id:
-			has_tiles = true
-			break
+		terrain_by_pos[Vector2i(tile["x"], tile["y"])] = tile["terrain"]
 
-	if not has_tiles:
-		return null
-
-	var mesh := ImmediateMesh.new()
-	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
 
 	for raw_tile: Variant in tiles:
 		var tile: Dictionary = raw_tile
-		if tile["terrain"] != terrain_id:
-			continue
-		has_tiles = true
-		_add_textured_tile_quad(mesh, float(tile["x"]), float(tile["y"]), TERRAIN_Y, TILE_SIZE)
+		_add_blended_tile_geometry(
+			vertices,
+			normals,
+			uvs,
+			colors,
+			indices,
+			Vector2i(tile["x"], tile["y"]),
+			terrain_by_pos
+		)
 
-	mesh.surface_end()
-	return mesh
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+	var instance := MeshInstance3D.new()
+	instance.name = "Terrain"
+	instance.mesh = mesh
+	instance.material_override = _terrain_blend_material()
+	_map_root.add_child(instance)
 
 
-func _terrain_material(terrain_id: String) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.roughness = 0.92
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var texture: Texture2D = load(TERRAIN_TEXTURES.get(terrain_id, ""))
-	if texture != null:
-		material.albedo_color = Color.WHITE
-		material.albedo_texture = texture
-	else:
-		material.albedo_color = TERRAIN_COLORS.get(terrain_id, Color.WHITE)
+func _add_blended_tile_geometry(
+	vertices: PackedVector3Array,
+	normals: PackedVector3Array,
+	uvs: PackedVector2Array,
+	colors: PackedColorArray,
+	indices: PackedInt32Array,
+	pos: Vector2i,
+	terrain_by_pos: Dictionary
+) -> void:
+	var base_index := vertices.size()
+	var offsets := [-0.5, 0.0, 0.5]
+
+	for z_offset: float in offsets:
+		for x_offset: float in offsets:
+			var world_x := float(pos.x) + x_offset
+			var world_z := float(pos.y) + z_offset
+			vertices.append(Vector3(world_x, TERRAIN_Y, world_z))
+			normals.append(Vector3.UP)
+			uvs.append(Vector2(world_x + 0.5, world_z + 0.5))
+			colors.append(_terrain_blend_weight(pos, x_offset, z_offset, terrain_by_pos))
+
+	var quads := [
+		[0, 1, 4, 3],
+		[1, 2, 5, 4],
+		[3, 4, 7, 6],
+		[4, 5, 8, 7],
+	]
+	for quad: Array in quads:
+		indices.append(base_index + quad[0])
+		indices.append(base_index + quad[1])
+		indices.append(base_index + quad[2])
+		indices.append(base_index + quad[0])
+		indices.append(base_index + quad[2])
+		indices.append(base_index + quad[3])
+
+
+func _terrain_blend_weight(pos: Vector2i, x_offset: float, z_offset: float, terrain_by_pos: Dictionary) -> Color:
+	var samples: Array[Vector2i] = [pos]
+	if x_offset < 0.0:
+		samples.append(pos + Vector2i(-1, 0))
+	elif x_offset > 0.0:
+		samples.append(pos + Vector2i(1, 0))
+
+	if z_offset < 0.0:
+		samples.append(pos + Vector2i(0, -1))
+	elif z_offset > 0.0:
+		samples.append(pos + Vector2i(0, 1))
+
+	if x_offset != 0.0 and z_offset != 0.0:
+		samples.append(pos + Vector2i(signi(x_offset), signi(z_offset)))
+
+	var weight := Vector3.ZERO
+	for sample_pos: Vector2i in samples:
+		weight += _terrain_weight_vector(terrain_by_pos.get(sample_pos, terrain_by_pos.get(pos, "ground")))
+	weight /= float(samples.size())
+	return Color(weight.x, weight.y, weight.z, 1.0)
+
+
+func _terrain_weight_vector(terrain_id: String) -> Vector3:
+	match terrain_id:
+		"stone":
+			return Vector3(0.0, 1.0, 0.0)
+		"water":
+			return Vector3(0.0, 0.0, 1.0)
+		_:
+			return Vector3(1.0, 0.0, 0.0)
+
+
+func _terrain_blend_material() -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = TERRAIN_BLEND_SHADER
+	var material := ShaderMaterial.new()
+	material.shader = shader
+	material.set_shader_parameter("ground_texture", load(TERRAIN_TEXTURES["ground"]))
+	material.set_shader_parameter("stone_texture", load(TERRAIN_TEXTURES["stone"]))
+	material.set_shader_parameter("water_texture", load(TERRAIN_TEXTURES["water"]))
 	return material
 
 
@@ -140,27 +203,6 @@ func _resource_material(resource_id: String) -> StandardMaterial3D:
 	else:
 		material.albedo_color = RESOURCE_COLORS.get(resource_id, Color.WHITE)
 	return material
-
-
-func _add_textured_tile_quad(mesh: ImmediateMesh, x: float, z: float, y: float, size: float) -> void:
-	var half := size * 0.5
-	var a := Vector3(x - half, y, z - half)
-	var b := Vector3(x + half, y, z - half)
-	var c := Vector3(x + half, y, z + half)
-	var d := Vector3(x - half, y, z + half)
-	mesh.surface_set_normal(Vector3.UP)
-	mesh.surface_set_uv(Vector2(0.0, 0.0))
-	mesh.surface_add_vertex(a)
-	mesh.surface_set_uv(Vector2(1.0, 0.0))
-	mesh.surface_add_vertex(b)
-	mesh.surface_set_uv(Vector2(1.0, 1.0))
-	mesh.surface_add_vertex(c)
-	mesh.surface_set_uv(Vector2(0.0, 0.0))
-	mesh.surface_add_vertex(a)
-	mesh.surface_set_uv(Vector2(1.0, 1.0))
-	mesh.surface_add_vertex(c)
-	mesh.surface_set_uv(Vector2(0.0, 1.0))
-	mesh.surface_add_vertex(d)
 
 
 func _add_resources(tiles: Array) -> void:
