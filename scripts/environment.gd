@@ -3,6 +3,7 @@ extends Node3D
 const GRID_STEP := 1.0
 const TILE_SIZE := 1.0
 const TERRAIN_Y := 0.0
+const RESOURCE_Y := 0.035
 
 const TERRAIN_COLORS := {
 	"ground": Color(0.18, 0.26, 0.18),
@@ -14,6 +15,18 @@ const RESOURCE_COLORS := {
 	"iron_ore": Color(0.56, 0.49, 0.40),
 	"copper_ore": Color(0.78, 0.39, 0.18),
 	"coal": Color(0.05, 0.05, 0.05),
+}
+
+const TERRAIN_TEXTURES := {
+	"ground": "res://assets/images/ground_tile.png",
+	"stone": "res://assets/images/terrain_stone.png",
+	"water": "res://assets/images/terrain_water.png",
+}
+
+const RESOURCE_TEXTURES := {
+	"iron_ore": "res://assets/images/resource_iron_ore.png",
+	"copper_ore": "res://assets/images/resource_copper_ore.png",
+	"coal": "res://assets/images/resource_coal.png",
 }
 
 var _map_root: Node3D
@@ -71,14 +84,10 @@ func _add_terrain_batches(tiles: Array) -> void:
 		if mesh == null:
 			continue
 
-		var material := StandardMaterial3D.new()
-		material.albedo_color = TERRAIN_COLORS[terrain_id]
-		material.roughness = 0.92
-
 		var instance := MeshInstance3D.new()
 		instance.name = "Terrain_%s" % terrain_id
 		instance.mesh = mesh
-		instance.material_override = material
+		instance.material_override = _terrain_material(terrain_id)
 		_map_root.add_child(instance)
 
 
@@ -101,25 +110,57 @@ func _terrain_mesh(tiles: Array, terrain_id: String) -> ImmediateMesh:
 		if tile["terrain"] != terrain_id:
 			continue
 		has_tiles = true
-		_add_tile_quad(mesh, float(tile["x"]), float(tile["y"]), TERRAIN_Y)
+		_add_textured_tile_quad(mesh, float(tile["x"]), float(tile["y"]), TERRAIN_Y, TILE_SIZE)
 
 	mesh.surface_end()
 	return mesh
 
 
-func _add_tile_quad(mesh: ImmediateMesh, x: float, z: float, y: float) -> void:
-	var half := TILE_SIZE * 0.5
+func _terrain_material(terrain_id: String) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.roughness = 0.92
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var texture: Texture2D = load(TERRAIN_TEXTURES.get(terrain_id, ""))
+	if texture != null:
+		material.albedo_color = Color.WHITE
+		material.albedo_texture = texture
+	else:
+		material.albedo_color = TERRAIN_COLORS.get(terrain_id, Color.WHITE)
+	return material
+
+
+func _resource_material(resource_id: String) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.roughness = 0.86
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var texture: Texture2D = load(RESOURCE_TEXTURES.get(resource_id, ""))
+	if texture != null:
+		material.albedo_color = Color.WHITE
+		material.albedo_texture = texture
+	else:
+		material.albedo_color = RESOURCE_COLORS.get(resource_id, Color.WHITE)
+	return material
+
+
+func _add_textured_tile_quad(mesh: ImmediateMesh, x: float, z: float, y: float, size: float) -> void:
+	var half := size * 0.5
 	var a := Vector3(x - half, y, z - half)
 	var b := Vector3(x + half, y, z - half)
 	var c := Vector3(x + half, y, z + half)
 	var d := Vector3(x - half, y, z + half)
 	mesh.surface_set_normal(Vector3.UP)
+	mesh.surface_set_uv(Vector2(0.0, 0.0))
 	mesh.surface_add_vertex(a)
-	mesh.surface_add_vertex(c)
+	mesh.surface_set_uv(Vector2(1.0, 0.0))
 	mesh.surface_add_vertex(b)
-	mesh.surface_add_vertex(a)
-	mesh.surface_add_vertex(d)
+	mesh.surface_set_uv(Vector2(1.0, 1.0))
 	mesh.surface_add_vertex(c)
+	mesh.surface_set_uv(Vector2(0.0, 0.0))
+	mesh.surface_add_vertex(a)
+	mesh.surface_set_uv(Vector2(1.0, 1.0))
+	mesh.surface_add_vertex(c)
+	mesh.surface_set_uv(Vector2(0.0, 1.0))
+	mesh.surface_add_vertex(d)
 
 
 func _add_resources(tiles: Array) -> void:
@@ -127,28 +168,36 @@ func _add_resources(tiles: Array) -> void:
 	resource_root.name = "Resources"
 	_map_root.add_child(resource_root)
 
-	var mesh_cache := {}
+	var positions_by_resource := {}
 	for raw_tile: Variant in tiles:
 		var tile: Dictionary = raw_tile
 		var resource_id: String = tile["resource"]
 		if resource_id.is_empty():
 			continue
+		if not positions_by_resource.has(resource_id):
+			positions_by_resource[resource_id] = []
+		positions_by_resource[resource_id].append(Vector3(float(tile["x"]), RESOURCE_Y, float(tile["y"])))
 
-		var mesh: BoxMesh = mesh_cache.get(resource_id)
-		if mesh == null:
-			mesh = BoxMesh.new()
-			mesh.size = Vector3(0.68, 0.055, 0.68)
-			mesh_cache[resource_id] = mesh
+	for resource_id: String in positions_by_resource.keys():
+		var positions: Array = positions_by_resource[resource_id]
+		if positions.is_empty():
+			continue
 
-		var material := StandardMaterial3D.new()
-		material.albedo_color = RESOURCE_COLORS.get(resource_id, Color(0.55, 0.48, 0.40))
-		material.roughness = 0.86
+		var mesh := PlaneMesh.new()
+		mesh.size = Vector2(0.94, 0.94)
 
-		var instance := MeshInstance3D.new()
-		instance.name = "Resource_%s_%d_%d" % [resource_id, tile["x"], tile["y"]]
-		instance.mesh = mesh
-		instance.material_override = material
-		instance.position = Vector3(float(tile["x"]), 0.05, float(tile["y"]))
+		var multimesh := MultiMesh.new()
+		multimesh.transform_format = MultiMesh.TRANSFORM_3D
+		multimesh.mesh = mesh
+		multimesh.instance_count = positions.size()
+
+		for index in positions.size():
+			multimesh.set_instance_transform(index, Transform3D(Basis(), positions[index]))
+
+		var instance := MultiMeshInstance3D.new()
+		instance.name = "Resource_%s" % resource_id
+		instance.multimesh = multimesh
+		instance.material_override = _resource_material(resource_id)
 		resource_root.add_child(instance)
 
 
