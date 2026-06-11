@@ -1,0 +1,69 @@
+[gd_scene load_steps=6 format=3 uid="uid://rsh7othplwn4"]
+
+[ext_resource type="Script" uid="uid://c8clmmuy2i6wj" path="res://game/main/main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://2s5aawf7ye74" path="res://game/world/environment.gd" id="2_environment"]
+[ext_resource type="Script" uid="uid://dj4sikixsjmb5" path="res://game/ui/hotbar.gd" id="3_hotbar"]
+[ext_resource type="PackedScene" path="res://game/player/player.tscn" id="4_player"]
+
+[sub_resource type="Environment" id="Environment_scene"]
+background_mode = 1
+background_color = Color(0.0352941, 0.0431373, 0.0392157, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.78, 0.84, 0.8, 1)
+ambient_light_energy = 0.55
+tonemap_mode = 2
+glow_enabled = true
+glow_intensity = 0.12
+
+[node name="Main" type="Node3D" unique_id=462620492]
+script = ExtResource("1_main")
+
+[node name="Environment" type="Node3D" parent="." unique_id=865814042]
+script = ExtResource("2_environment")
+
+[node name="Player" parent="." unique_id=468131106 instance=ExtResource("4_player")]
+unique_name_in_owner = true
+
+[node name="Buildings" type="Node3D" parent="." unique_id=39566692]
+unique_name_in_owner = true
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=2145410582]
+unique_name_in_owner = true
+current = true
+fov = 48.0
+
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=1701196171]
+transform = Transform3D(0.707107, -0.5, 0.5, 0, 0.707107, 0.707107, -0.707107, -0.5, 0.5, 0, 0, 0)
+light_energy = 2.1
+light_angular_distance = 0.6
+shadow_enabled = true
+shadow_blur = 1.6
+directional_shadow_blend_splits = true
+directional_shadow_max_distance = 80.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=55554594]
+environment = SubResource("Environment_scene")
+
+[node name="Hud" type="CanvasLayer" parent="." unique_id=1593648294]
+
+[node name="Hotbar" type="Control" parent="Hud" unique_id=352255747]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("3_hotbar")
+
+[node name="PanelContainer" type="PanelContainer" parent="Hud" unique_id=597866796]
+offset_left = 16.0
+offset_top = 16.0
+offset_right = 310.0
+offset_bottom = 104.0
+
+[node name="StatusLabel" type="Label" parent="Hud/PanelContainer" unique_id=565821346]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Starting Neptune simulation..."

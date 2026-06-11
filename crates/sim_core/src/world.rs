@@ -17,8 +17,8 @@ use crate::building::{
     SimInventoryRecord, UndergroundRole, UndergroundRuntime, footprint_tiles, initial_state,
 };
 use crate::catalog::{
-    CoreBuildingDriver, CoreBuildingKind, CoreCatalog, CoreInventoryRole, CoreItemStack,
-    CorePortDef, CorePortRole, CorePortSide, CoreTerrainDef,
+    CoreBuildingDef, CoreBuildingDriver, CoreBuildingKind, CoreCatalog, CoreInventoryRole,
+    CoreItemStack, CorePortDef, CorePortRole, CorePortSide, CoreTerrainDef,
 };
 use crate::character_inventory::{
     CharacterContainerId, CharacterContainerSection, CharacterEquipResult, CharacterEquipmentEntry,
@@ -55,7 +55,7 @@ use crate::transport::stream::{MIN_ITEM_SPACING, PackedItemStream};
 use crate::units::{DistanceUnits, UnitsPerTick};
 use crate::view::{VisibleItem, VisibleSplitterItemPhase, VisibleTileBounds};
 use crate::worldgen::GeneratedMapRegion;
-use behavior_api::{BehaviorCatalog, BehaviorEffect, BehaviorId};
+use behavior_api::{BehaviorCatalog, BehaviorConfigValue, BehaviorEffect, BehaviorId};
 
 mod behaviors;
 mod belt_io;
@@ -147,6 +147,26 @@ fn footprint_offsets_for_direction(
         *y -= min_y;
     }
     rotated
+}
+
+fn extractor_requires_resource_footprint(def: &CoreBuildingDef) -> bool {
+    matches!(
+        def.behavior.config.get("role"),
+        Some(BehaviorConfigValue::String(role)) if role == "extractor"
+    )
+}
+
+fn extractor_resource_kinds(def: &CoreBuildingDef) -> BTreeSet<ItemKindId> {
+    let mut resources = BTreeSet::new();
+    for output in &def.outputs {
+        resources.extend(output.accepts.iter().copied());
+    }
+    for inventory in &def.inventories {
+        if inventory.role == CoreInventoryRole::Output {
+            resources.extend(inventory.accepts.iter().copied());
+        }
+    }
+    resources
 }
 
 fn splitter_internal_channel_tiles(origin: TilePos, direction: Direction) -> [TilePos; 2] {
@@ -1098,6 +1118,68 @@ impl SimWorld {
             }
         }
         tiles
+    }
+
+    pub fn building_footprint_for(
+        &self,
+        def_id: &str,
+        origin: TilePos,
+        direction: Direction,
+    ) -> Result<Vec<TilePos>, SimCommandError> {
+        let def = self
+            .catalog
+            .building_by_id(def_id)
+            .ok_or(SimCommandError::UnknownBuildingKind)?;
+        let offsets =
+            footprint_offsets_for_direction(&def.footprint, def.rotate_footprint, direction);
+        Ok(footprint_tiles(origin, &offsets))
+    }
+
+    pub fn can_place_core_building(
+        &self,
+        def_id: &str,
+        origin: TilePos,
+        direction: Direction,
+    ) -> Result<(), SimCommandError> {
+        let def = self
+            .catalog
+            .building_by_id(def_id)
+            .ok_or(SimCommandError::UnknownBuildingKind)?;
+        if matches!(&def.behavior.driver, CoreBuildingDriver::Underground { .. }) {
+            return Err(SimCommandError::InvalidPort);
+        }
+
+        let offsets =
+            footprint_offsets_for_direction(&def.footprint, def.rotate_footprint, direction);
+        let footprint = footprint_tiles(origin, &offsets);
+        for &pos in &footprint {
+            self.ensure_buildable(pos)?;
+        }
+        for &pos in &footprint {
+            if self.building_occupancy.contains_key(&pos) || self.occupied_tiles.contains_key(&pos)
+            {
+                return Err(SimCommandError::OccupiedTile { pos });
+            }
+        }
+        if extractor_requires_resource_footprint(def)
+            && !self.footprint_has_matching_resource(def, &footprint)
+        {
+            return Err(SimCommandError::InvalidRecipe);
+        }
+        Ok(())
+    }
+
+    fn footprint_has_matching_resource(
+        &self,
+        def: &CoreBuildingDef,
+        footprint: &[TilePos],
+    ) -> bool {
+        let accepted_resources = extractor_resource_kinds(def);
+        footprint.iter().any(|pos| {
+            self.resources.get(pos).is_some_and(|(kind, amount)| {
+                *amount > 0 && (accepted_resources.is_empty() || accepted_resources.contains(kind))
+            })
+        })
     }
 
     pub fn resource_tiles_in_rect(

@@ -1,0 +1,321 @@
+extends Node3D
+
+@onready var camera: Camera3D = %Camera3D
+@onready var player: PlayerController = %Player
+@onready var buildings_root: Node3D = %Buildings
+@onready var status_label: Label = %StatusLabel
+@onready var hotbar = %Hotbar
+@onready var environment: Node3D = $Environment
+
+const MAP_RADIUS := 72
+const CAMERA_MIN_DISTANCE := 10.0
+const CAMERA_MAX_DISTANCE := 140.0
+const CAMERA_TARGET_HEIGHT := 0.75
+const BUILD_GHOST_Y := 0.075
+const BUILDING_VISUAL_Y := 0.24
+const GHOST_VALID_COLOR := Color(0.28, 0.78, 1.0, 0.38)
+const GHOST_BLOCKED_COLOR := Color(1.0, 0.22, 0.18, 0.38)
+
+const BUILDING_MODEL_PATHS := {
+	"basic_miner": "res://assets/models/basic_mining_drill.blend",
+	"basic_belt": "res://assets/models/conveyor_belt_straight.blend",
+	"accelerated_belt": "res://assets/models/conveyor_belt_straight.blend",
+	"fast_belt": "res://assets/models/conveyor_belt_straight.blend",
+	"basic_splitter": "res://assets/models/conveyor_splitter.blend",
+	"basic_inserter": "res://assets/models/industrial_robot_arm.blend",
+	"stone_furnace": "res://assets/models/stone_industrial_furnace.blend",
+}
+
+const BUILDING_COLORS := {
+	"basic_miner": Color(0.38, 0.48, 0.36),
+	"wooden_chest": Color(0.48, 0.32, 0.18),
+	"basic_belt": Color(0.18, 0.22, 0.23),
+	"stone_furnace": Color(0.42, 0.40, 0.36),
+	"basic_inserter": Color(0.54, 0.46, 0.22),
+	"basic_assembler": Color(0.28, 0.36, 0.46),
+	"accelerated_belt": Color(0.24, 0.30, 0.34),
+	"fast_belt": Color(0.18, 0.28, 0.38),
+	"basic_splitter": Color(0.24, 0.24, 0.30),
+	"basic_underground_belt": Color(0.18, 0.18, 0.22),
+}
+
+var sim: NeptuneSim
+var camera_yaw := deg_to_rad(42.0)
+var camera_elevation := deg_to_rad(58.0)
+var camera_distance := 32.0
+var selected_building_id := ""
+var build_quarter_turns := 0
+var build_preview_tile := Vector2i.ZERO
+var build_preview_valid := false
+var build_ghost_root: Node3D
+
+
+func _ready() -> void:
+	sim = NeptuneSim.new()
+	sim.generate_starting_map(MAP_RADIUS)
+	environment.build_from_sim(sim)
+	hotbar.selected.connect(_on_hotbar_selected)
+	selected_building_id = hotbar.selected_entry_id()
+	build_ghost_root = Node3D.new()
+	build_ghost_root.name = "BuildGhost"
+	add_child(build_ghost_root)
+	sim.tick_many(3)
+	_update_status_label()
+	_update_camera()
+	print(status_label.text.replace("\n", " | "))
+
+
+func _process(_delta: float) -> void:
+	_update_camera()
+	_update_build_preview()
+
+
+func _physics_process(_delta: float) -> void:
+	player.movement_yaw = camera_yaw
+
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		camera_yaw -= event.relative.x * 0.006
+		camera_elevation = clamp(
+			camera_elevation - event.relative.y * 0.006,
+			deg_to_rad(18.0),
+			deg_to_rad(76.0)
+		)
+		_update_camera()
+		get_viewport().set_input_as_handled()
+	elif event is InputEventMouseButton and event.pressed:
+		match event.button_index:
+			MOUSE_BUTTON_WHEEL_UP:
+				camera_distance = max(CAMERA_MIN_DISTANCE, camera_distance - 0.5)
+				_update_camera()
+				get_viewport().set_input_as_handled()
+			MOUSE_BUTTON_WHEEL_DOWN:
+				camera_distance = min(CAMERA_MAX_DISTANCE, camera_distance + 0.5)
+				_update_camera()
+				get_viewport().set_input_as_handled()
+			MOUSE_BUTTON_LEFT:
+				if not _is_pointer_over_ui():
+					_try_place_selected_building()
+	elif event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_R and not selected_building_id.is_empty():
+			build_quarter_turns = (build_quarter_turns + 1) % 4
+			_update_build_preview()
+			get_viewport().set_input_as_handled()
+
+
+func _is_pointer_over_ui() -> bool:
+	return get_viewport().gui_get_hovered_control() != null
+
+
+func _update_camera() -> void:
+	var target: Vector3 = player.global_position + Vector3.UP * CAMERA_TARGET_HEIGHT
+	var horizontal_distance := camera_distance * cos(camera_elevation)
+	var offset := Vector3(
+		horizontal_distance * sin(camera_yaw),
+		camera_distance * sin(camera_elevation),
+		horizontal_distance * cos(camera_yaw)
+	)
+	camera.global_position = target + offset
+	camera.look_at(target, Vector3.UP)
+
+
+func _on_hotbar_selected(entry_id: String) -> void:
+	selected_building_id = entry_id
+	build_quarter_turns = 0
+	_update_status_label()
+
+
+func _update_status_label() -> void:
+	status_label.text = "Neptune Godot runtime loaded\nTick: %d\nDigest: %d\nTiles: %d\nResources: %d\nSelected: %s" % [
+		sim.core_tick(),
+		sim.digest(),
+		sim.map_tile_count(),
+		sim.resource_count(),
+		selected_building_id,
+	]
+
+
+func _update_build_preview() -> void:
+	if selected_building_id.is_empty():
+		build_ghost_root.visible = false
+		return
+
+	var tile_variant: Variant = _mouse_ground_tile()
+	if tile_variant == null:
+		build_ghost_root.visible = false
+		return
+
+	var tile: Vector2i = tile_variant
+	build_preview_tile = tile
+	var footprint: Array = sim.building_footprint(
+		selected_building_id,
+		build_preview_tile.x,
+		build_preview_tile.y,
+		build_quarter_turns
+	)
+	if footprint.is_empty():
+		build_ghost_root.visible = false
+		build_preview_valid = false
+		return
+
+	build_preview_valid = sim.can_place_building(
+		selected_building_id,
+		build_preview_tile.x,
+		build_preview_tile.y,
+		build_quarter_turns
+	) and not _footprint_intersects_player(footprint)
+	_sync_ghost_tiles(footprint, GHOST_VALID_COLOR if build_preview_valid else GHOST_BLOCKED_COLOR)
+	build_ghost_root.visible = true
+
+
+func _try_place_selected_building() -> void:
+	if selected_building_id.is_empty() or not build_preview_valid:
+		return
+
+	if sim.place_building(
+		selected_building_id,
+		build_preview_tile.x,
+		build_preview_tile.y,
+		build_quarter_turns
+	):
+		_render_buildings_from_sim()
+		_update_build_preview()
+		_update_status_label()
+		get_viewport().set_input_as_handled()
+
+
+func _mouse_ground_tile() -> Variant:
+	var mouse_position := get_viewport().get_mouse_position()
+	var ray_origin := camera.project_ray_origin(mouse_position)
+	var ray_direction := camera.project_ray_normal(mouse_position)
+	if abs(ray_direction.y) < 0.0001:
+		return null
+
+	var distance := -ray_origin.y / ray_direction.y
+	if distance < 0.0:
+		return null
+
+	var hit := ray_origin + ray_direction * distance
+	return Vector2i(int(round(hit.x)), int(round(hit.z)))
+
+
+func _sync_ghost_tiles(footprint: Array, color: Color) -> void:
+	_clear_children(build_ghost_root)
+	for raw_tile: Variant in footprint:
+		var tile: Dictionary = raw_tile
+		var instance := MeshInstance3D.new()
+		var mesh := PlaneMesh.new()
+		mesh.size = Vector2(0.96, 0.96)
+		instance.mesh = mesh
+		instance.position = Vector3(float(tile["x"]), BUILD_GHOST_Y, float(tile["y"]))
+		instance.material_override = _transparent_material(color)
+		build_ghost_root.add_child(instance)
+
+
+func _render_buildings_from_sim() -> void:
+	_clear_children(buildings_root)
+	var snapshots: Array = sim.buildings()
+	for raw_building: Variant in snapshots:
+		var building: Dictionary = raw_building
+		var building_node := Node3D.new()
+		building_node.name = "Building_%s" % str(building["id"])
+		buildings_root.add_child(building_node)
+
+		var def_id := str(building["def_id"])
+		var color: Color = BUILDING_COLORS.get(def_id, Color(0.34, 0.36, 0.34))
+		var material := _solid_material(color)
+		var footprint: Array = building["footprint"]
+		var model := _instantiate_building_model(def_id)
+		if model != null:
+			model.position = _footprint_center(footprint)
+			model.rotation.y = _rotation_y_for_quarter_turns(int(building["quarter_turns"]))
+			building_node.add_child(model)
+		else:
+			_add_fallback_building_tiles(building_node, footprint, material)
+
+
+func _instantiate_building_model(def_id: String) -> Node3D:
+	var path: String = BUILDING_MODEL_PATHS.get(def_id, "")
+	if path.is_empty():
+		return null
+
+	var scene := load(path) as PackedScene
+	if scene == null:
+		push_warning("Missing building model scene for %s at %s" % [def_id, path])
+		return null
+
+	var instance := scene.instantiate() as Node3D
+	if instance == null:
+		push_warning("Building model scene is not Node3D for %s at %s" % [def_id, path])
+		return null
+
+	return instance
+
+
+func _add_fallback_building_tiles(parent: Node3D, footprint: Array, material: Material) -> void:
+	for raw_tile: Variant in footprint:
+		var tile: Dictionary = raw_tile
+		var instance := MeshInstance3D.new()
+		var mesh := BoxMesh.new()
+		mesh.size = Vector3(0.86, 0.48, 0.86)
+		instance.mesh = mesh
+		instance.position = Vector3(float(tile["x"]), BUILDING_VISUAL_Y, float(tile["y"]))
+		instance.material_override = material
+		parent.add_child(instance)
+
+
+func _footprint_center(footprint: Array) -> Vector3:
+	var min_x := INF
+	var max_x := -INF
+	var min_y := INF
+	var max_y := -INF
+	for raw_tile: Variant in footprint:
+		var tile: Dictionary = raw_tile
+		var x := float(tile["x"])
+		var y := float(tile["y"])
+		min_x = min(min_x, x)
+		max_x = max(max_x, x)
+		min_y = min(min_y, y)
+		max_y = max(max_y, y)
+
+	return Vector3((min_x + max_x) * 0.5, 0.0, (min_y + max_y) * 0.5)
+
+
+func _rotation_y_for_quarter_turns(quarter_turns: int) -> float:
+	return deg_to_rad(float(quarter_turns * 90))
+
+
+func _footprint_intersects_player(footprint: Array) -> bool:
+	var player_tile := _player_tile()
+	for raw_tile: Variant in footprint:
+		var tile: Dictionary = raw_tile
+		if Vector2i(int(tile["x"]), int(tile["y"])) == player_tile:
+			return true
+	return false
+
+
+func _player_tile() -> Vector2i:
+	return Vector2i(int(round(player.global_position.x)), int(round(player.global_position.z)))
+
+
+func _transparent_material(color: Color) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return material
+
+
+func _solid_material(color: Color) -> StandardMaterial3D:
+	var material := StandardMaterial3D.new()
+	material.albedo_color = color
+	material.roughness = 0.82
+	return material
+
+
+func _clear_children(node: Node) -> void:
+	for child: Node in node.get_children():
+		node.remove_child(child)
+		child.queue_free()

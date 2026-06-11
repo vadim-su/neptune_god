@@ -594,7 +594,7 @@ impl CoreCatalog {
                 CoreBuildingDef {
                     id: "basic_miner".to_string(),
                     kind: CoreBuildingKind::Machine,
-                    footprint: rectangle(5, 5),
+                    footprint: rectangle(2, 2),
                     rotate_footprint: false,
                     inputs: Vec::new(),
                     outputs: vec![CorePortDef {
