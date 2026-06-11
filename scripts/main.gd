@@ -2,24 +2,29 @@ extends Node3D
 
 @onready var camera: Camera3D = %Camera3D
 @onready var status_label: Label = %StatusLabel
+@onready var environment: Node3D = $Environment
 
-const CAMERA_TARGET := Vector3(0.7, 0.25, -0.1)
-const CAMERA_MIN_DISTANCE := 4.0
-const CAMERA_MAX_DISTANCE := 14.0
+const MAP_RADIUS := 72
+const CAMERA_TARGET := Vector3(0.0, 0.0, 0.0)
+const CAMERA_MIN_DISTANCE := 10.0
+const CAMERA_MAX_DISTANCE := 140.0
 
 var sim: NeptuneSim
 var camera_yaw := deg_to_rad(42.0)
-var camera_elevation := deg_to_rad(43.0)
-var camera_distance := 8.0
+var camera_elevation := deg_to_rad(58.0)
+var camera_distance := 96.0
 
 
 func _ready() -> void:
 	sim = NeptuneSim.new()
+	sim.generate_starting_map(MAP_RADIUS)
+	environment.build_from_sim(sim)
 	sim.tick_many(3)
-	status_label.text = "Neptune Godot runtime loaded\nTick: %d\nDigest: %d\nBuildings: %d" % [
+	status_label.text = "Neptune Godot runtime loaded\nTick: %d\nDigest: %d\nTiles: %d\nResources: %d" % [
 		sim.core_tick(),
 		sim.digest(),
-		sim.building_count(),
+		sim.map_tile_count(),
+		sim.resource_count(),
 	]
 	_update_camera()
 	print(status_label.text.replace("\n", " | "))

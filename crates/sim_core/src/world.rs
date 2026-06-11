@@ -54,6 +54,7 @@ use crate::transport::storage::TransportStorage;
 use crate::transport::stream::{MIN_ITEM_SPACING, PackedItemStream};
 use crate::units::{DistanceUnits, UnitsPerTick};
 use crate::view::{VisibleItem, VisibleSplitterItemPhase, VisibleTileBounds};
+use crate::worldgen::GeneratedMapRegion;
 use behavior_api::{BehaviorCatalog, BehaviorEffect, BehaviorId};
 
 mod behaviors;
@@ -1064,6 +1065,58 @@ impl SimWorld {
             self.set_terrain(pos, terrain_id)?;
         }
         Ok(())
+    }
+
+    pub fn apply_generated_region(&mut self, generated: &GeneratedMapRegion) -> Result<(), String> {
+        self.set_terrain_chunk(
+            generated
+                .terrain_tiles
+                .iter()
+                .map(|tile| (tile.pos, tile.terrain_id.clone())),
+        )?;
+        for resource in &generated.resource_tiles {
+            let Some(kind) = self.catalog.item_id_by_def_id(&resource.item_def_id) else {
+                return Err(format!("unknown resource item '{}'", resource.item_def_id));
+            };
+            if resource.amount > 0 {
+                self.resources.insert(resource.pos, (kind, resource.amount));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn terrain_tiles_in_rect(&self, min: TilePos, max: TilePos) -> Vec<(TilePos, String)> {
+        let min = TilePos::new(min.x.min(max.x), min.y.min(max.y));
+        let max = TilePos::new(min.x.max(max.x), min.y.max(max.y));
+        let mut tiles = Vec::with_capacity(
+            ((max.x - min.x + 1) as usize).saturating_mul((max.y - min.y + 1) as usize),
+        );
+        for y in min.y..=max.y {
+            for x in min.x..=max.x {
+                let pos = TilePos::new(x, y);
+                tiles.push((pos, self.terrain_at(pos).id.clone()));
+            }
+        }
+        tiles
+    }
+
+    pub fn resource_tiles_in_rect(
+        &self,
+        min: TilePos,
+        max: TilePos,
+    ) -> Vec<(TilePos, String, u32)> {
+        let min = TilePos::new(min.x.min(max.x), min.y.min(max.y));
+        let max = TilePos::new(min.x.max(max.x), min.y.max(max.y));
+        self.resources
+            .iter()
+            .filter_map(|(pos, (kind, amount))| {
+                if pos.x < min.x || pos.x > max.x || pos.y < min.y || pos.y > max.y {
+                    return None;
+                }
+                let def_id = self.catalog.def_id_by_item_id(*kind)?;
+                Some((*pos, def_id.to_string(), *amount))
+            })
+            .collect()
     }
 
     pub fn is_empty_for_catalog_install(&self) -> bool {

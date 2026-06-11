@@ -24,6 +24,7 @@ pub mod transport;
 pub mod units;
 pub mod view;
 pub mod world;
+pub mod worldgen;
 
 #[cfg(test)]
 mod perf_gate;
