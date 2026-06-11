@@ -2,6 +2,7 @@ extends Node3D
 
 @onready var camera: Camera3D = %Camera3D
 @onready var status_label: Label = %StatusLabel
+@onready var hotbar = %Hotbar
 @onready var environment: Node3D = $Environment
 
 const MAP_RADIUS := 72
@@ -13,19 +14,17 @@ var sim: NeptuneSim
 var camera_yaw := deg_to_rad(42.0)
 var camera_elevation := deg_to_rad(58.0)
 var camera_distance := 96.0
+var selected_building_id := ""
 
 
 func _ready() -> void:
 	sim = NeptuneSim.new()
 	sim.generate_starting_map(MAP_RADIUS)
 	environment.build_from_sim(sim)
+	hotbar.selected.connect(_on_hotbar_selected)
+	selected_building_id = hotbar.selected_entry_id()
 	sim.tick_many(3)
-	status_label.text = "Neptune Godot runtime loaded\nTick: %d\nDigest: %d\nTiles: %d\nResources: %d" % [
-		sim.core_tick(),
-		sim.digest(),
-		sim.map_tile_count(),
-		sim.resource_count(),
-	]
+	_update_status_label()
 	_update_camera()
 	print(status_label.text.replace("\n", " | "))
 
@@ -58,3 +57,18 @@ func _update_camera() -> void:
 	)
 	camera.global_position = CAMERA_TARGET + offset
 	camera.look_at(CAMERA_TARGET, Vector3.UP)
+
+
+func _on_hotbar_selected(entry_id: String) -> void:
+	selected_building_id = entry_id
+	_update_status_label()
+
+
+func _update_status_label() -> void:
+	status_label.text = "Neptune Godot runtime loaded\nTick: %d\nDigest: %d\nTiles: %d\nResources: %d\nSelected: %s" % [
+		sim.core_tick(),
+		sim.digest(),
+		sim.map_tile_count(),
+		sim.resource_count(),
+		selected_building_id,
+	]
