@@ -35,6 +35,9 @@ render_mode cull_disabled;
 uniform sampler2D ground_texture : source_color, repeat_enable;
 uniform sampler2D stone_texture : source_color, repeat_enable;
 uniform sampler2D water_texture : source_color, repeat_enable;
+uniform float terrain_scale = 0.18;
+uniform float detail_scale = 0.47;
+uniform float detail_strength = 0.28;
 
 varying vec3 terrain_weight;
 
@@ -42,11 +45,21 @@ void vertex() {
 	terrain_weight = COLOR.rgb;
 }
 
+vec2 rotated_uv(vec2 uv) {
+	mat2 rotation = mat2(vec2(0.819152, 0.573576), vec2(-0.573576, 0.819152));
+	return rotation * uv;
+}
+
+vec3 terrain_sample(sampler2D source, vec2 world_uv) {
+	vec3 broad = texture(source, world_uv * terrain_scale).rgb;
+	vec3 detail = texture(source, rotated_uv(world_uv) * detail_scale + vec2(19.37, 7.11)).rgb;
+	return mix(broad, detail, detail_strength);
+}
+
 void fragment() {
-	vec2 tile_uv = fract(UV);
-	vec3 ground = texture(ground_texture, tile_uv).rgb;
-	vec3 stone = texture(stone_texture, tile_uv).rgb;
-	vec3 water = texture(water_texture, tile_uv).rgb;
+	vec3 ground = terrain_sample(ground_texture, UV);
+	vec3 stone = terrain_sample(stone_texture, UV);
+	vec3 water = terrain_sample(water_texture, UV);
 	vec3 weights = max(terrain_weight, vec3(0.0));
 	float total = max(weights.r + weights.g + weights.b, 0.001);
 	weights /= total;
@@ -189,6 +202,9 @@ func _terrain_blend_material() -> ShaderMaterial:
 	material.set_shader_parameter("ground_texture", load(TERRAIN_TEXTURES["ground"]))
 	material.set_shader_parameter("stone_texture", load(TERRAIN_TEXTURES["stone"]))
 	material.set_shader_parameter("water_texture", load(TERRAIN_TEXTURES["water"]))
+	material.set_shader_parameter("terrain_scale", 0.18)
+	material.set_shader_parameter("detail_scale", 0.47)
+	material.set_shader_parameter("detail_strength", 0.28)
 	return material
 
 
