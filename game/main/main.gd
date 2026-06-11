@@ -13,6 +13,7 @@ const CAMERA_MAX_DISTANCE := 140.0
 const CAMERA_TARGET_HEIGHT := 0.75
 const BUILD_GHOST_Y := 0.075
 const BUILDING_VISUAL_Y := 0.24
+const PLAYER_COLLISION_RADIUS := 0.32
 const GHOST_VALID_COLOR := Color(0.28, 0.78, 1.0, 0.38)
 const GHOST_BLOCKED_COLOR := Color(1.0, 0.22, 0.18, 0.38)
 
@@ -39,6 +40,14 @@ const BUILDING_COLORS := {
 	"basic_underground_belt": Color(0.18, 0.18, 0.22),
 }
 
+const WALKABLE_BUILDING_IDS := {
+	"basic_belt": true,
+	"accelerated_belt": true,
+	"fast_belt": true,
+	"basic_splitter": true,
+	"basic_underground_belt": true,
+}
+
 var sim: NeptuneSim
 var camera_yaw := deg_to_rad(42.0)
 var camera_elevation := deg_to_rad(58.0)
@@ -48,11 +57,13 @@ var build_quarter_turns := 0
 var build_preview_tile := Vector2i.ZERO
 var build_preview_valid := false
 var build_ghost_root: Node3D
+var blocked_building_tiles := {}
 
 
 func _ready() -> void:
 	sim = NeptuneSim.new()
 	sim.generate_starting_map(MAP_RADIUS)
+	player.can_move_to = Callable(self, "_is_player_position_walkable")
 	environment.build_from_sim(sim)
 	hotbar.selected.connect(_on_hotbar_selected)
 	selected_building_id = hotbar.selected_entry_id()
@@ -164,13 +175,29 @@ func _update_build_preview() -> void:
 		build_preview_tile.x,
 		build_preview_tile.y,
 		build_quarter_turns
-	) and not _footprint_intersects_player(footprint)
+	) and _footprint_allows_player(selected_building_id, footprint)
 	_sync_ghost_tiles(footprint, GHOST_VALID_COLOR if build_preview_valid else GHOST_BLOCKED_COLOR)
 	build_ghost_root.visible = true
 
 
 func _try_place_selected_building() -> void:
 	if selected_building_id.is_empty() or not build_preview_valid:
+		return
+
+	var footprint: Array = sim.building_footprint(
+		selected_building_id,
+		build_preview_tile.x,
+		build_preview_tile.y,
+		build_quarter_turns
+	)
+	if not sim.can_place_building(
+		selected_building_id,
+		build_preview_tile.x,
+		build_preview_tile.y,
+		build_quarter_turns
+	) or not _footprint_allows_player(selected_building_id, footprint):
+		build_preview_valid = false
+		_sync_ghost_tiles(footprint, GHOST_BLOCKED_COLOR)
 		return
 
 	if sim.place_building(
@@ -215,6 +242,7 @@ func _sync_ghost_tiles(footprint: Array, color: Color) -> void:
 
 func _render_buildings_from_sim() -> void:
 	_clear_children(buildings_root)
+	blocked_building_tiles.clear()
 	var snapshots: Array = sim.buildings()
 	for raw_building: Variant in snapshots:
 		var building: Dictionary = raw_building
@@ -226,6 +254,8 @@ func _render_buildings_from_sim() -> void:
 		var color: Color = BUILDING_COLORS.get(def_id, Color(0.34, 0.36, 0.34))
 		var material := _solid_material(color)
 		var footprint: Array = building["footprint"]
+		if not _is_walkable_building(def_id):
+			_add_blocked_building_tiles(footprint)
 		var model := _instantiate_building_model(def_id)
 		if model != null:
 			model.position = _footprint_center(footprint)
@@ -233,6 +263,51 @@ func _render_buildings_from_sim() -> void:
 			building_node.add_child(model)
 		else:
 			_add_fallback_building_tiles(building_node, footprint, material)
+
+
+func _add_blocked_building_tiles(footprint: Array) -> void:
+	for raw_tile: Variant in footprint:
+		var tile: Dictionary = raw_tile
+		blocked_building_tiles[Vector2i(int(tile["x"]), int(tile["y"]))] = true
+
+
+func _is_walkable_building(def_id: String) -> bool:
+	return WALKABLE_BUILDING_IDS.has(def_id)
+
+
+func _footprint_allows_player(def_id: String, footprint: Array) -> bool:
+	if _is_walkable_building(def_id):
+		return true
+	return not _footprint_overlaps_player(footprint)
+
+
+func _footprint_overlaps_player(footprint: Array) -> bool:
+	for raw_tile: Variant in footprint:
+		var tile: Dictionary = raw_tile
+		if _player_overlaps_tile(player.global_position, Vector2i(int(tile["x"]), int(tile["y"]))):
+			return true
+	return false
+
+
+func _is_player_position_walkable(position: Vector3) -> bool:
+	var min_tile_x := int(ceil(position.x - 0.5 - PLAYER_COLLISION_RADIUS))
+	var max_tile_x := int(floor(position.x + 0.5 + PLAYER_COLLISION_RADIUS))
+	var min_tile_y := int(ceil(position.z - 0.5 - PLAYER_COLLISION_RADIUS))
+	var max_tile_y := int(floor(position.z + 0.5 + PLAYER_COLLISION_RADIUS))
+
+	for tile_x in range(min_tile_x, max_tile_x + 1):
+		for tile_y in range(min_tile_y, max_tile_y + 1):
+			var tile := Vector2i(tile_x, tile_y)
+			if blocked_building_tiles.has(tile) and _player_overlaps_tile(position, tile):
+				return false
+	return true
+
+
+func _player_overlaps_tile(position: Vector3, tile: Vector2i) -> bool:
+	var closest_x: float = clamp(position.x, float(tile.x) - 0.5, float(tile.x) + 0.5)
+	var closest_z: float = clamp(position.z, float(tile.y) - 0.5, float(tile.y) + 0.5)
+	var offset := Vector2(position.x - closest_x, position.z - closest_z)
+	return offset.length_squared() < PLAYER_COLLISION_RADIUS * PLAYER_COLLISION_RADIUS
 
 
 func _instantiate_building_model(def_id: String) -> Node3D:
@@ -284,19 +359,6 @@ func _footprint_center(footprint: Array) -> Vector3:
 
 func _rotation_y_for_quarter_turns(quarter_turns: int) -> float:
 	return deg_to_rad(float(quarter_turns * 90))
-
-
-func _footprint_intersects_player(footprint: Array) -> bool:
-	var player_tile := _player_tile()
-	for raw_tile: Variant in footprint:
-		var tile: Dictionary = raw_tile
-		if Vector2i(int(tile["x"]), int(tile["y"])) == player_tile:
-			return true
-	return false
-
-
-func _player_tile() -> Vector2i:
-	return Vector2i(int(round(player.global_position.x)), int(round(player.global_position.z)))
 
 
 func _transparent_material(color: Color) -> StandardMaterial3D:
