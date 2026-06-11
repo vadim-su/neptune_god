@@ -1,0 +1,11 @@
+[package]
+name = "neptune_godot"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+godot.workspace = true
+sim_core = { path = "../sim_core" }

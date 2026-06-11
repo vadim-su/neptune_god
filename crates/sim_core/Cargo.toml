@@ -1,0 +1,8 @@
+[package]
+name = "sim_core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+behavior_api = { path = "../behavior_api" }
+serde.workspace = true

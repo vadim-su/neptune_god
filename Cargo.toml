@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "crates/behavior_api",
+    "crates/neptune_godot",
+    "crates/sim_core",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+godot = "0.5.3"
+serde = { version = "1.0.228", features = ["derive"] }
