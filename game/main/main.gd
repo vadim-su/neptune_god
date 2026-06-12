@@ -5,6 +5,7 @@ const BuildingRendererScript := preload("res://game/buildings/building_renderer.
 const SelectionOutlineScript := preload("res://game/buildings/selection_outline.gd")
 const MachineWindowScene := preload("res://game/ui/machine_window.tscn")
 const CatalogSelectorScene := preload("res://game/ui/catalog_selector.tscn")
+const InventoryWindowScene := preload("res://game/ui/inventory_window.tscn")
 const HOTBAR_SELECTOR_OWNER_PREFIX := "hotbar:"
 
 @onready var camera: Camera3D = %Camera3D
@@ -42,6 +43,7 @@ var building_tile_index := {}
 var selection_outline_root: Node3D
 var machine_window: MachineWindow
 var catalog_selector: Node
+var inventory_window: Node
 
 
 func _ready() -> void:
@@ -61,6 +63,8 @@ func _ready() -> void:
 	machine_window = MachineWindowScene.instantiate() as MachineWindow
 	$Hud.add_child(machine_window)
 	machine_window.recipe_selected.connect(_on_machine_recipe_selected)
+	inventory_window = InventoryWindowScene.instantiate()
+	$Hud.add_child(inventory_window)
 	catalog_selector = CatalogSelectorScene.instantiate()
 	$Hud.add_child(catalog_selector)
 	catalog_selector.entry_selected.connect(_on_catalog_selector_entry_selected)
@@ -72,7 +76,9 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
-	player.input_blocked = catalog_selector != null and catalog_selector.is_open()
+	player.input_blocked = _ui_blocks_gameplay_input()
+	if inventory_window != null and inventory_window.is_open():
+		_update_inventory_window()
 	_update_camera()
 	_update_build_preview()
 
@@ -86,6 +92,13 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 			catalog_selector.close_selector()
 			get_viewport().set_input_as_handled()
+		return
+
+	if inventory_window != null and inventory_window.is_open():
+		if event is InputEventKey and event.pressed and not event.echo:
+			if event.keycode == KEY_ESCAPE or event.keycode == KEY_E:
+				inventory_window.hide_window()
+				get_viewport().set_input_as_handled()
 		return
 
 	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
@@ -127,6 +140,9 @@ func _input(event: InputEvent) -> void:
 			else:
 				_clear_selected_object()
 			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_E:
+			_toggle_inventory_window()
+			get_viewport().set_input_as_handled()
 		elif event.keycode == KEY_R and build_mode == BuildMode.BUILD and not selected_building_id.is_empty():
 			build_quarter_turns = (build_quarter_turns + 1) % 4
 			_update_build_preview()
@@ -135,6 +151,13 @@ func _input(event: InputEvent) -> void:
 
 func _is_pointer_over_ui() -> bool:
 	return get_viewport().gui_get_hovered_control() != null
+
+
+func _ui_blocks_gameplay_input() -> bool:
+	return (
+		(catalog_selector != null and catalog_selector.is_open())
+		or (inventory_window != null and inventory_window.is_open())
+	)
 
 
 func _update_camera() -> void:
@@ -179,6 +202,34 @@ func _on_catalog_selector_closed(owner_id: String) -> void:
 		return
 	var slot_index := int(owner_id.trim_prefix(HOTBAR_SELECTOR_OWNER_PREFIX))
 	hotbar.cancel_assignment(slot_index)
+
+
+func _toggle_inventory_window() -> void:
+	if inventory_window.is_open():
+		inventory_window.hide_window()
+		return
+	_update_inventory_window()
+	inventory_window.show_inventory(
+		sim.inventory_snapshot(),
+		selected_object,
+		_selected_object_ui_snapshot()
+	)
+
+
+func _update_inventory_window() -> void:
+	if inventory_window == null:
+		return
+	inventory_window.update_inventory(
+		sim.inventory_snapshot(),
+		selected_object,
+		_selected_object_ui_snapshot()
+	)
+
+
+func _selected_object_ui_snapshot() -> Dictionary:
+	if selected_object.is_empty():
+		return {}
+	return sim.building_ui_snapshot(selected_object_id)
 
 
 func _building_selector_entries() -> Array:

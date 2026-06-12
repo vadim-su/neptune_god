@@ -47,6 +47,33 @@ struct InventoryUiSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct PlayerInventoryUiSnapshot {
+    player_slots: Vec<Option<ItemStackUiSnapshot>>,
+    sections: Vec<CharacterContainerUiSnapshot>,
+    equipment: Vec<CharacterEquipmentUiSnapshot>,
+    cursor: Option<ItemStackUiSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CharacterContainerUiSnapshot {
+    id: String,
+    name: String,
+    slots: Vec<Option<ItemStackUiSnapshot>>,
+    used_slots: usize,
+    total_slots: usize,
+    total_weight_grams: u32,
+    max_weight_grams: Option<u32>,
+    total_bulk_units: u32,
+    max_bulk_units: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CharacterEquipmentUiSnapshot {
+    slot: String,
+    item: &'static str,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct ItemStackUiSnapshot {
     item: &'static str,
     amount: u32,
@@ -252,6 +279,11 @@ impl NeptuneSim {
             BuildingId(building_id.max(0) as u32),
         )
         .unwrap_or_else(VarDictionary::new)
+    }
+
+    #[func]
+    pub fn inventory_snapshot(&self) -> VarDictionary {
+        inventory_ui_snapshot_to_godot(inventory_ui_snapshot_data(&self.world))
     }
 
     #[func]
@@ -646,6 +678,120 @@ fn inventory_slots_to_godot(slots: Vec<Option<ItemStackUiSnapshot>>) -> VarArray
     array
 }
 
+fn inventory_ui_snapshot_data(world: &SimWorld) -> PlayerInventoryUiSnapshot {
+    PlayerInventoryUiSnapshot {
+        player_slots: world
+            .player_inventory_snapshot()
+            .slots
+            .iter()
+            .map(|slot| {
+                slot.map(|stack| ItemStackUiSnapshot {
+                    item: item_def_id(stack.kind),
+                    amount: stack.amount,
+                })
+            })
+            .collect(),
+        sections: world
+            .character_container_sections()
+            .into_iter()
+            .map(|section| CharacterContainerUiSnapshot {
+                id: section.container_id.as_str().to_string(),
+                name: section.name,
+                slots: section
+                    .slots
+                    .iter()
+                    .map(|slot| {
+                        slot.map(|stack| ItemStackUiSnapshot {
+                            item: item_def_id(stack.kind),
+                            amount: stack.amount,
+                        })
+                    })
+                    .collect(),
+                used_slots: section.used_slots,
+                total_slots: section.total_slots,
+                total_weight_grams: section.total_weight_grams,
+                max_weight_grams: section.max_weight_grams,
+                total_bulk_units: section.total_bulk_units,
+                max_bulk_units: section.max_bulk_units,
+            })
+            .collect(),
+        equipment: world
+            .character_equipment()
+            .into_iter()
+            .map(|entry| CharacterEquipmentUiSnapshot {
+                slot: entry.slot.as_str().to_string(),
+                item: item_def_id(entry.item),
+            })
+            .collect(),
+        cursor: world.cursor_stack().map(|stack| ItemStackUiSnapshot {
+            item: item_def_id(stack.kind),
+            amount: stack.amount,
+        }),
+    }
+}
+
+fn inventory_ui_snapshot_to_godot(snapshot: PlayerInventoryUiSnapshot) -> VarDictionary {
+    let mut dictionary = VarDictionary::new();
+    dictionary.set(
+        "player_slots",
+        &inventory_slots_to_godot(snapshot.player_slots),
+    );
+    dictionary.set("sections", &character_sections_to_godot(snapshot.sections));
+    dictionary.set(
+        "equipment",
+        &character_equipment_to_godot(snapshot.equipment),
+    );
+    dictionary.set("cursor", &optional_item_stack_to_godot(snapshot.cursor));
+    dictionary
+}
+
+fn character_sections_to_godot(sections_data: Vec<CharacterContainerUiSnapshot>) -> VarArray {
+    let mut sections = VarArray::new();
+    for section_data in sections_data {
+        let mut section = VarDictionary::new();
+        section.set("id", section_data.id.as_str());
+        section.set("name", section_data.name.as_str());
+        section.set("slots", &inventory_slots_to_godot(section_data.slots));
+        section.set("used_slots", section_data.used_slots as i64);
+        section.set("total_slots", section_data.total_slots as i64);
+        section.set("total_weight_grams", section_data.total_weight_grams as i64);
+        section.set(
+            "max_weight_grams",
+            section_data.max_weight_grams.map_or(0_i64, i64::from),
+        );
+        section.set("total_bulk_units", section_data.total_bulk_units as i64);
+        section.set(
+            "max_bulk_units",
+            section_data.max_bulk_units.map_or(0_i64, i64::from),
+        );
+        sections.push(&section);
+    }
+    sections
+}
+
+fn character_equipment_to_godot(equipment_data: Vec<CharacterEquipmentUiSnapshot>) -> VarArray {
+    let mut equipment = VarArray::new();
+    for entry_data in equipment_data {
+        let mut entry = VarDictionary::new();
+        entry.set("slot", entry_data.slot.as_str());
+        entry.set("item", entry_data.item);
+        equipment.push(&entry);
+    }
+    equipment
+}
+
+fn optional_item_stack_to_godot(stack: Option<ItemStackUiSnapshot>) -> VarDictionary {
+    let mut dictionary = VarDictionary::new();
+    if let Some(stack) = stack {
+        dictionary.set("item", stack.item);
+        dictionary.set("amount", stack.amount as i64);
+    } else {
+        dictionary.set("item", "");
+        dictionary.set("amount", 0_i64);
+    }
+    dictionary
+}
+
 fn def_behavior_role(def: &CoreBuildingDef) -> Option<&str> {
     match def.behavior.config.get("role") {
         Some(BehaviorConfigValue::String(value)) => Some(value.as_str()),
@@ -925,5 +1071,44 @@ mod tests {
 
         assert_eq!(snapshot.active_recipe.as_deref(), Some("copper_plate"));
         assert_eq!(snapshot.recipe_grid_visible, false);
+    }
+
+    #[test]
+    fn inventory_ui_snapshot_exposes_player_slots_and_cursor() {
+        let mut world = SimWorld::with_catalog(CoreCatalog::for_tests());
+        assert!(
+            world
+                .insert_into_player_inventory_for_tests(sim_core::catalog::CoreItemStack {
+                    kind: sim_core::catalog::TEST_IRON_ORE,
+                    amount: 7,
+                })
+                .is_ok()
+        );
+        assert!(
+            world
+                .set_cursor_stack_for_tests(sim_core::catalog::CoreItemStack {
+                    kind: sim_core::catalog::TEST_COAL,
+                    amount: 3,
+                })
+                .is_ok()
+        );
+
+        let snapshot = inventory_ui_snapshot_data(&world);
+
+        assert_eq!(snapshot.player_slots.len(), 80);
+        assert_eq!(
+            snapshot.player_slots[0],
+            Some(ItemStackUiSnapshot {
+                item: "iron_ore",
+                amount: 7
+            })
+        );
+        assert_eq!(
+            snapshot.cursor,
+            Some(ItemStackUiSnapshot {
+                item: "coal",
+                amount: 3
+            })
+        );
     }
 }

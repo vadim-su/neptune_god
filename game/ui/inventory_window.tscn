@@ -1,0 +1,178 @@
+[gd_scene format=3 uid="uid://b80jo7rwxacxs"]
+
+[ext_resource type="Script" path="res://game/ui/inventory_window.gd" id="1_inventory_window"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(0.07, 0.075, 0.065, 0.96)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.56, 0.76, 0.42, 0.72)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cursor"]
+bg_color = Color(0.105, 0.112, 0.098, 0.98)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.95, 0.84, 0.55, 0.95)
+
+[node name="InventoryWindow" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("1_inventory_window")
+
+[node name="PlayerPanel" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(610, 620)
+layout_mode = 1
+offset_left = 140.0
+offset_top = 72.0
+offset_right = 750.0
+offset_bottom = 692.0
+mouse_filter = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="PlayerMargin" type="MarginContainer" parent="PlayerPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="PlayerColumn" type="VBoxContainer" parent="PlayerPanel/PlayerMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="PlayerHeader" type="HBoxContainer" parent="PlayerPanel/PlayerMargin/PlayerColumn"]
+layout_mode = 2
+
+[node name="PlayerTitle" type="Label" parent="PlayerPanel/PlayerMargin/PlayerColumn/PlayerHeader"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.92, 0.94, 0.86, 1)
+theme_override_font_sizes/font_size = 22
+text = "Character"
+
+[node name="PlayerCloseButton" type="Button" parent="PlayerPanel/PlayerMargin/PlayerColumn/PlayerHeader"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(28, 28)
+layout_mode = 2
+text = "X"
+
+[node name="Content" type="HBoxContainer" parent="PlayerPanel/PlayerMargin/PlayerColumn"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="EquipmentColumn" type="VBoxContainer" parent="PlayerPanel/PlayerMargin/PlayerColumn/Content"]
+custom_minimum_size = Vector2(210, 0)
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="StatusLabel" type="Label" parent="PlayerPanel/PlayerMargin/PlayerColumn/Content/EquipmentColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_color = Color(0.82, 0.84, 0.78, 1)
+theme_override_font_sizes/font_size = 12
+text = "Status: ready"
+
+[node name="EquipmentList" type="VBoxContainer" parent="PlayerPanel/PlayerMargin/PlayerColumn/Content/EquipmentColumn"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="SectionsScroll" type="ScrollContainer" parent="PlayerPanel/PlayerMargin/PlayerColumn/Content"]
+custom_minimum_size = Vector2(348, 560)
+layout_mode = 2
+size_flags_horizontal = 3
+horizontal_scroll_mode = 0
+
+[node name="Sections" type="VBoxContainer" parent="PlayerPanel/PlayerMargin/PlayerColumn/Content/SectionsScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="ObjectPanel" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(270, 620)
+layout_mode = 1
+offset_left = 764.0
+offset_top = 72.0
+offset_right = 1034.0
+offset_bottom = 692.0
+mouse_filter = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="ObjectMargin" type="MarginContainer" parent="ObjectPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="ObjectColumn" type="VBoxContainer" parent="ObjectPanel/ObjectMargin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="ObjectHeader" type="HBoxContainer" parent="ObjectPanel/ObjectMargin/ObjectColumn"]
+layout_mode = 2
+
+[node name="ObjectTitle" type="Label" parent="ObjectPanel/ObjectMargin/ObjectColumn/ObjectHeader"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.92, 0.94, 0.86, 1)
+theme_override_font_sizes/font_size = 22
+text = "Object"
+
+[node name="ObjectCloseButton" type="Button" parent="ObjectPanel/ObjectMargin/ObjectColumn/ObjectHeader"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(28, 28)
+layout_mode = 2
+text = "X"
+
+[node name="ObjectScroll" type="ScrollContainer" parent="ObjectPanel/ObjectMargin/ObjectColumn"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="ObjectContent" type="VBoxContainer" parent="ObjectPanel/ObjectMargin/ObjectColumn/ObjectScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="CursorStack" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+visible = false
+custom_minimum_size = Vector2(38, 38)
+layout_mode = 1
+offset_right = 38.0
+offset_bottom = 38.0
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_cursor")
+
+[node name="CursorIcon" type="TextureRect" parent="CursorStack"]
+unique_name_in_owner = true
+layout_mode = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="CursorAmount" type="Label" parent="CursorStack"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(0.82, 0.84, 0.78, 1)
+theme_override_font_sizes/font_size = 11
+horizontal_alignment = 2
+vertical_alignment = 2

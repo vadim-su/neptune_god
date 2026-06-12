@@ -150,15 +150,20 @@ func _definition_text(id: String, model_path: String) -> String:
 		if not ResourceLoader.exists(model_path):
 			model_state = "[color=orange]%s[/color]" % model_path
 
-	return "\n".join([
+	var rows := [
 		"[b]id[/b]: %s" % id,
 		"[b]type[/b]: %s" % BuildingCatalogScript.ui_type(id),
 		"[b]state[/b]: %s" % BuildingCatalogScript.state_label(id),
 		"[b]walkable[/b]: %s" % str(BuildingCatalogScript.is_walkable(id)),
 		"[b]color[/b]: %s" % BuildingCatalogScript.color(id).to_html(false),
-		"[b]glyph[/b]: %s" % BuildingCatalogScript.glyph(id),
 		"[b]model[/b]: %s" % model_state,
-	])
+	]
+
+	var glyph := str(BuildingCatalogScript.definition(id).get("glyph", ""))
+	if not glyph.is_empty():
+		rows.insert(rows.size() - 1, "[b]glyph[/b]: %s" % glyph)
+
+	return "\n".join(rows)
 
 
 func _preview_model(id: String, model_path: String) -> void:
