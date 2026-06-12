@@ -9,7 +9,6 @@ const FALLBACK_DEFINITIONS := {
 		"state_label": "machine",
 		"model": "res://assets/models/buildings/basic_mining_drill.blend",
 		"color": "#617A5C",
-		"glyph": "M",
 		"walkable": false,
 	},
 	"wooden_chest": {
@@ -18,7 +17,6 @@ const FALLBACK_DEFINITIONS := {
 		"state_label": "idle",
 		"model": "",
 		"color": "#7A512E",
-		"glyph": "C",
 		"walkable": false,
 	},
 	"basic_belt": {
@@ -27,7 +25,6 @@ const FALLBACK_DEFINITIONS := {
 		"state_label": "transport",
 		"model": "res://assets/models/logistics/conveyor_belt_straight.blend",
 		"color": "#2E383A",
-		"glyph": "B",
 		"walkable": true,
 	},
 	"stone_furnace": {
@@ -36,7 +33,6 @@ const FALLBACK_DEFINITIONS := {
 		"state_label": "machine",
 		"model": "res://assets/models/buildings/stone_industrial_furnace.blend",
 		"color": "#6B665C",
-		"glyph": "F",
 		"walkable": false,
 	},
 	"basic_inserter": {
@@ -45,7 +41,6 @@ const FALLBACK_DEFINITIONS := {
 		"state_label": "inserter",
 		"model": "res://assets/models/buildings/industrial_robot_arm.blend",
 		"color": "#8A7538",
-		"glyph": "I",
 		"walkable": false,
 	},
 	"basic_assembler": {
@@ -54,7 +49,6 @@ const FALLBACK_DEFINITIONS := {
 		"state_label": "machine",
 		"model": "",
 		"color": "#475C75",
-		"glyph": "A",
 		"walkable": false,
 	},
 	"accelerated_belt": {
@@ -63,7 +57,6 @@ const FALLBACK_DEFINITIONS := {
 		"state_label": "transport",
 		"model": "res://assets/models/logistics/conveyor_belt_straight.blend",
 		"color": "#3D4C57",
-		"glyph": "B+",
 		"walkable": true,
 	},
 	"fast_belt": {
@@ -72,7 +65,6 @@ const FALLBACK_DEFINITIONS := {
 		"state_label": "transport",
 		"model": "res://assets/models/logistics/conveyor_belt_straight.blend",
 		"color": "#2E475C",
-		"glyph": "B++",
 		"walkable": true,
 	},
 	"basic_splitter": {
@@ -81,7 +73,6 @@ const FALLBACK_DEFINITIONS := {
 		"state_label": "transport",
 		"model": "res://assets/models/logistics/conveyor_splitter.blend",
 		"color": "#3D3D4C",
-		"glyph": "S",
 		"walkable": true,
 	},
 	"basic_underground_belt": {
@@ -90,7 +81,6 @@ const FALLBACK_DEFINITIONS := {
 		"state_label": "transport",
 		"model": "",
 		"color": "#2E2E38",
-		"glyph": "U",
 		"walkable": true,
 	},
 }
@@ -121,10 +111,6 @@ static func state_label(def_id: String) -> String:
 
 static func is_walkable(def_id: String) -> bool:
 	return bool(definition(def_id).get("walkable", false))
-
-
-static func glyph(def_id: String) -> String:
-	return str(definition(def_id).get("glyph", display_name(def_id).left(1).to_upper()))
 
 
 static func definitions() -> Array:

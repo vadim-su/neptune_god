@@ -126,6 +126,7 @@ checksum = "a846cbc04412cf509efcd8f3694b114fc700a035fb5a37f21517f9fb019f1ebc"
 name = "neptune_godot"
 version = "0.1.0"
 dependencies = [
+ "behavior_api",
  "godot",
  "sim_core",
 ]

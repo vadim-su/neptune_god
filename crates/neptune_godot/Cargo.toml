@@ -7,5 +7,6 @@ edition.workspace = true
 crate-type = ["cdylib"]
 
 [dependencies]
+behavior_api = { path = "../behavior_api" }
 godot.workspace = true
 sim_core = { path = "../sim_core" }

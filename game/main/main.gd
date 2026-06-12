@@ -3,7 +3,7 @@ extends Node3D
 const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd")
 const BuildingRendererScript := preload("res://game/buildings/building_renderer.gd")
 const SelectionOutlineScript := preload("res://game/buildings/selection_outline.gd")
-const BuildingInspectorScript := preload("res://game/ui/building_inspector.gd")
+const MachineWindowScene := preload("res://game/ui/machine_window.tscn")
 
 @onready var camera: Camera3D = %Camera3D
 @onready var player: PlayerController = %Player
@@ -38,7 +38,7 @@ var build_ghost_root: Node3D
 var blocked_building_tiles := {}
 var building_tile_index := {}
 var selection_outline_root: Node3D
-var building_inspector := BuildingInspectorScript.new()
+var machine_window: MachineWindow
 
 
 func _ready() -> void:
@@ -54,7 +54,9 @@ func _ready() -> void:
 	selection_outline_root.name = "SelectionOutline"
 	selection_outline_root.visible = false
 	add_child(selection_outline_root)
-	building_inspector.setup($Hud)
+	machine_window = MachineWindowScene.instantiate() as MachineWindow
+	$Hud.add_child(machine_window)
+	machine_window.recipe_selected.connect(_on_machine_recipe_selected)
 	sim.tick_many(3)
 	_update_status_label()
 	_update_camera()
@@ -231,13 +233,11 @@ func _try_place_selected_building() -> void:
 func _try_select_building_at_pointer() -> void:
 	var tile_variant: Variant = _mouse_ground_tile()
 	if tile_variant == null:
-		_clear_selected_object()
 		return
 
 	var tile: Vector2i = tile_variant
 	var building := _building_at_tile(tile)
 	if building.is_empty():
-		_clear_selected_object()
 		return
 
 	_select_object(building)
@@ -321,7 +321,7 @@ func _refresh_selected_object_after_render() -> void:
 		return
 
 	selected_object = building
-	building_inspector.update(selected_object)
+	_update_selected_machine_window()
 	SelectionOutlineScript.sync(selection_outline_root, building["footprint"])
 
 
@@ -340,7 +340,7 @@ func _build_mode_label() -> String:
 func _select_object(building: Dictionary) -> void:
 	selected_object_id = int(building["id"])
 	selected_object = building
-	building_inspector.update(selected_object)
+	_update_selected_machine_window()
 	SelectionOutlineScript.sync(selection_outline_root, building["footprint"])
 	_update_status_label()
 
@@ -348,9 +348,24 @@ func _select_object(building: Dictionary) -> void:
 func _clear_selected_object() -> void:
 	selected_object_id = -1
 	selected_object.clear()
-	building_inspector.hide()
+	machine_window.hide_window()
 	SelectionOutlineScript.hide(selection_outline_root)
 	_update_status_label()
+
+
+func _update_selected_machine_window() -> void:
+	if selected_object.is_empty():
+		machine_window.hide_window()
+		return
+	var snapshot: Dictionary = sim.building_ui_snapshot(selected_object_id)
+	machine_window.update(selected_object, snapshot)
+
+
+func _on_machine_recipe_selected(building_id: int, recipe_id: String) -> void:
+	if building_id != selected_object_id:
+		return
+	if sim.set_building_recipe(building_id, recipe_id):
+		_update_selected_machine_window()
 
 
 func _footprint_allows_player(def_id: String, footprint: Array) -> bool:
