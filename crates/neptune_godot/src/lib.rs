@@ -84,6 +84,11 @@ impl NeptuneSim {
     }
 
     #[func]
+    pub fn remove_building(&mut self, x: i32, y: i32) -> bool {
+        remove_building_for_godot(&mut self.world, x, y)
+    }
+
+    #[func]
     pub fn building_footprint(
         &self,
         def_id: GString,
@@ -220,6 +225,14 @@ fn place_building_for_godot(
         .is_ok()
 }
 
+fn remove_building_for_godot(world: &mut SimWorld, x: i32, y: i32) -> bool {
+    world
+        .apply_core_command_for_tests(SimCommand::RemoveBuilding {
+            pos: TilePos::new(x, y),
+        })
+        .is_ok()
+}
+
 fn building_footprint_for_godot(
     world: &SimWorld,
     def_id: &str,
@@ -299,6 +312,23 @@ mod tests {
             0,
             0
         ));
+    }
+
+    #[test]
+    fn placement_bridge_removes_building_by_occupied_tile() {
+        let mut world = SimWorld::with_catalog(CoreCatalog::for_tests());
+
+        assert!(place_building_for_godot(
+            &mut world,
+            "stone_furnace",
+            10,
+            20,
+            0
+        ));
+        assert_eq!(world.building_snapshots().len(), 1);
+
+        assert!(remove_building_for_godot(&mut world, 11, 20));
+        assert!(world.building_snapshots().is_empty());
     }
 
     #[test]

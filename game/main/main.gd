@@ -16,6 +16,10 @@ const BUILDING_VISUAL_Y := 0.24
 const PLAYER_COLLISION_RADIUS := 0.32
 const GHOST_VALID_COLOR := Color(0.28, 0.78, 1.0, 0.38)
 const GHOST_BLOCKED_COLOR := Color(1.0, 0.22, 0.18, 0.38)
+const INTERFACE_PANEL_BG := Color(0.070, 0.075, 0.065, 0.94)
+const INTERFACE_PANEL_BORDER := Color(0.560, 0.760, 0.420, 0.72)
+
+enum BuildMode { NEUTRAL, BUILD }
 
 const BUILDING_MODEL_PATHS := {
 	"basic_miner": "res://assets/models/buildings/basic_mining_drill.blend",
@@ -52,12 +56,19 @@ var sim: NeptuneSim
 var camera_yaw := deg_to_rad(42.0)
 var camera_elevation := deg_to_rad(58.0)
 var camera_distance := 32.0
+var build_mode := BuildMode.NEUTRAL
 var selected_building_id := ""
+var selected_object_id := -1
+var selected_object: Dictionary = {}
 var build_quarter_turns := 0
 var build_preview_tile := Vector2i.ZERO
 var build_preview_valid := false
 var build_ghost_root: Node3D
 var blocked_building_tiles := {}
+var building_tile_index := {}
+var building_interface_panel: PanelContainer
+var building_interface_title: Label
+var building_interface_body: Label
 
 
 func _ready() -> void:
@@ -66,10 +77,10 @@ func _ready() -> void:
 	player.can_move_to = Callable(self, "_is_player_position_walkable")
 	environment.build_from_sim(sim)
 	hotbar.selected.connect(_on_hotbar_selected)
-	selected_building_id = hotbar.selected_entry_id()
 	build_ghost_root = Node3D.new()
 	build_ghost_root.name = "BuildGhost"
 	add_child(build_ghost_root)
+	_building_interface_ui()
 	sim.tick_many(3)
 	_update_status_label()
 	_update_camera()
@@ -86,7 +97,7 @@ func _physics_process(_delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
 		camera_yaw -= event.relative.x * 0.006
 		camera_elevation = clamp(
 			camera_elevation - event.relative.y * 0.006,
@@ -105,11 +116,27 @@ func _input(event: InputEvent) -> void:
 				camera_distance = min(CAMERA_MAX_DISTANCE, camera_distance + 0.5)
 				_update_camera()
 				get_viewport().set_input_as_handled()
+			MOUSE_BUTTON_RIGHT:
+				if not _is_pointer_over_ui():
+					if build_mode == BuildMode.BUILD:
+						_enter_neutral_mode()
+					else:
+						_try_remove_building_at_pointer()
+					get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_LEFT:
 				if not _is_pointer_over_ui():
-					_try_place_selected_building()
+					if build_mode == BuildMode.BUILD:
+						_try_place_selected_building()
+					else:
+						_try_select_building_at_pointer()
 	elif event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_R and not selected_building_id.is_empty():
+		if event.keycode == KEY_ESCAPE:
+			if build_mode == BuildMode.BUILD:
+				_enter_neutral_mode()
+			else:
+				_clear_selected_object()
+			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_R and build_mode == BuildMode.BUILD and not selected_building_id.is_empty():
 			build_quarter_turns = (build_quarter_turns + 1) % 4
 			_update_build_preview()
 			get_viewport().set_input_as_handled()
@@ -132,29 +159,44 @@ func _update_camera() -> void:
 
 
 func _on_hotbar_selected(entry_id: String) -> void:
+	if entry_id.is_empty():
+		_enter_neutral_mode()
+		return
+
+	build_mode = BuildMode.BUILD
 	selected_building_id = entry_id
+	_clear_selected_object()
 	build_quarter_turns = 0
+	_update_build_preview()
 	_update_status_label()
 
 
 func _update_status_label() -> void:
-	status_label.text = "Neptune Godot runtime loaded\nTick: %d\nDigest: %d\nTiles: %d\nResources: %d\nSelected: %s" % [
+	var object_text := "none"
+	if not selected_object.is_empty():
+		object_text = "%s #%d" % [str(selected_object["def_id"]), selected_object_id]
+
+	status_label.text = "Neptune Godot runtime loaded\nTick: %d\nDigest: %d\nTiles: %d\nResources: %d\nMode: %s\nBuild: %s\nObject: %s" % [
 		sim.core_tick(),
 		sim.digest(),
 		sim.map_tile_count(),
 		sim.resource_count(),
+		_build_mode_label(),
 		selected_building_id,
+		object_text,
 	]
 
 
 func _update_build_preview() -> void:
-	if selected_building_id.is_empty():
+	if build_mode != BuildMode.BUILD or selected_building_id.is_empty():
 		build_ghost_root.visible = false
+		build_preview_valid = false
 		return
 
 	var tile_variant: Variant = _mouse_ground_tile()
 	if tile_variant == null:
 		build_ghost_root.visible = false
+		build_preview_valid = false
 		return
 
 	var tile: Vector2i = tile_variant
@@ -212,6 +254,43 @@ func _try_place_selected_building() -> void:
 		get_viewport().set_input_as_handled()
 
 
+func _try_select_building_at_pointer() -> void:
+	var tile_variant: Variant = _mouse_ground_tile()
+	if tile_variant == null:
+		_clear_selected_object()
+		return
+
+	var tile: Vector2i = tile_variant
+	var building := _building_at_tile(tile)
+	if building.is_empty():
+		_clear_selected_object()
+		return
+
+	_select_object(building)
+	get_viewport().set_input_as_handled()
+
+
+func _try_remove_building_at_pointer() -> void:
+	var tile_variant: Variant = _mouse_ground_tile()
+	if tile_variant == null:
+		return
+
+	var tile: Vector2i = tile_variant
+	var building := _building_at_tile(tile)
+	if building.is_empty():
+		return
+
+	var removed_id := int(building["id"])
+	if not sim.remove_building(tile.x, tile.y):
+		return
+
+	if selected_object_id == removed_id:
+		_clear_selected_object()
+	_render_buildings_from_sim()
+	_update_build_preview()
+	_update_status_label()
+
+
 func _mouse_ground_tile() -> Variant:
 	var mouse_position := get_viewport().get_mouse_position()
 	var ray_origin := camera.project_ray_origin(mouse_position)
@@ -243,6 +322,7 @@ func _sync_ghost_tiles(footprint: Array, color: Color) -> void:
 func _render_buildings_from_sim() -> void:
 	_clear_children(buildings_root)
 	blocked_building_tiles.clear()
+	building_tile_index.clear()
 	var snapshots: Array = sim.buildings()
 	for raw_building: Variant in snapshots:
 		var building: Dictionary = raw_building
@@ -254,6 +334,7 @@ func _render_buildings_from_sim() -> void:
 		var color: Color = BUILDING_COLORS.get(def_id, Color(0.34, 0.36, 0.34))
 		var material := _solid_material(color)
 		var footprint: Array = building["footprint"]
+		_index_building_tiles(building, footprint)
 		if not _is_walkable_building(def_id):
 			_add_blocked_building_tiles(footprint)
 		var model := _instantiate_building_model(def_id)
@@ -263,6 +344,131 @@ func _render_buildings_from_sim() -> void:
 			building_node.add_child(model)
 		else:
 			_add_fallback_building_tiles(building_node, footprint, material)
+	_refresh_selected_object_after_render()
+
+
+func _index_building_tiles(building: Dictionary, footprint: Array) -> void:
+	for raw_tile: Variant in footprint:
+		var tile: Dictionary = raw_tile
+		building_tile_index[Vector2i(int(tile["x"]), int(tile["y"]))] = building
+
+
+func _building_at_tile(tile: Vector2i) -> Dictionary:
+	if not building_tile_index.has(tile):
+		return {}
+	return building_tile_index[tile]
+
+
+func _building_by_id(id: int) -> Dictionary:
+	for building: Dictionary in building_tile_index.values():
+		if int(building["id"]) == id:
+			return building
+	return {}
+
+
+func _refresh_selected_object_after_render() -> void:
+	if selected_object_id == -1:
+		return
+
+	var building := _building_by_id(selected_object_id)
+	if building.is_empty():
+		_clear_selected_object()
+		return
+
+	selected_object = building
+	_update_building_interface()
+
+
+func _enter_neutral_mode() -> void:
+	build_mode = BuildMode.NEUTRAL
+	build_preview_valid = false
+	if build_ghost_root != null:
+		build_ghost_root.visible = false
+	_update_status_label()
+
+
+func _build_mode_label() -> String:
+	return "Build" if build_mode == BuildMode.BUILD else "Neutral"
+
+
+func _select_object(building: Dictionary) -> void:
+	selected_object_id = int(building["id"])
+	selected_object = building
+	_update_building_interface()
+	_update_status_label()
+
+
+func _clear_selected_object() -> void:
+	selected_object_id = -1
+	selected_object.clear()
+	if building_interface_panel != null:
+		building_interface_panel.visible = false
+	_update_status_label()
+
+
+func _building_interface_ui() -> void:
+	building_interface_panel = PanelContainer.new()
+	building_interface_panel.name = "BuildingInterface"
+	building_interface_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	building_interface_panel.visible = false
+	building_interface_panel.anchor_left = 1.0
+	building_interface_panel.anchor_right = 1.0
+	building_interface_panel.anchor_top = 0.0
+	building_interface_panel.anchor_bottom = 0.0
+	building_interface_panel.offset_left = -320.0
+	building_interface_panel.offset_top = 16.0
+	building_interface_panel.offset_right = -16.0
+	building_interface_panel.offset_bottom = 168.0
+	building_interface_panel.add_theme_stylebox_override("panel", _interface_stylebox())
+	$Hud.add_child(building_interface_panel)
+
+	var margin := MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 12)
+	margin.add_theme_constant_override("margin_top", 12)
+	margin.add_theme_constant_override("margin_right", 12)
+	margin.add_theme_constant_override("margin_bottom", 12)
+	building_interface_panel.add_child(margin)
+
+	var column := VBoxContainer.new()
+	column.add_theme_constant_override("separation", 8)
+	margin.add_child(column)
+
+	building_interface_title = Label.new()
+	building_interface_title.add_theme_font_size_override("font_size", 18)
+	building_interface_title.add_theme_color_override("font_color", Color(0.92, 0.94, 0.86))
+	column.add_child(building_interface_title)
+
+	building_interface_body = Label.new()
+	building_interface_body.add_theme_font_size_override("font_size", 14)
+	building_interface_body.add_theme_color_override("font_color", Color(0.78, 0.80, 0.74))
+	column.add_child(building_interface_body)
+
+
+func _update_building_interface() -> void:
+	if selected_object.is_empty() or building_interface_panel == null:
+		return
+
+	var footprint: Array = selected_object["footprint"]
+	var origin := Vector2i(int(selected_object["x"]), int(selected_object["y"]))
+	building_interface_title.text = "%s #%d" % [str(selected_object["def_id"]), selected_object_id]
+	building_interface_body.text = "Origin: %d, %d\nRotation: %d deg\nFootprint: %d tile(s)" % [
+		origin.x,
+		origin.y,
+		int(selected_object["quarter_turns"]) * 90,
+		footprint.size(),
+	]
+	building_interface_panel.visible = true
+
+
+func _interface_stylebox() -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = INTERFACE_PANEL_BG
+	style.border_color = INTERFACE_PANEL_BORDER
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	return style
 
 
 func _add_blocked_building_tiles(footprint: Array) -> void:
