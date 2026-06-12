@@ -1,0 +1,152 @@
+{
+  "schema": 1,
+  "recipes": [
+    {
+      "id": "mine_iron_ore",
+      "label": "Iron ore",
+      "machines": ["basic_miner"],
+      "kind": {
+        "type": "Extraction",
+        "resource": "iron_ore"
+      },
+      "duration_secs": 1.0,
+      "duration_ticks": 60,
+      "inputs": [],
+      "outputs": [
+        {"kind": "iron_ore", "amount": 1}
+      ],
+      "energy": {
+        "required_per_second": 1.0,
+        "min_temperature": 0.0
+      }
+    },
+    {
+      "id": "mine_copper_ore",
+      "label": "Copper ore",
+      "machines": ["basic_miner"],
+      "kind": {
+        "type": "Extraction",
+        "resource": "copper_ore"
+      },
+      "duration_secs": 1.0,
+      "duration_ticks": 60,
+      "inputs": [],
+      "outputs": [
+        {"kind": "copper_ore", "amount": 1}
+      ],
+      "energy": {
+        "required_per_second": 1.0,
+        "min_temperature": 0.0
+      }
+    },
+    {
+      "id": "mine_coal",
+      "label": "Coal",
+      "machines": ["basic_miner"],
+      "kind": {
+        "type": "Extraction",
+        "resource": "coal"
+      },
+      "duration_secs": 1.0,
+      "duration_ticks": 60,
+      "inputs": [],
+      "outputs": [
+        {"kind": "coal", "amount": 1}
+      ],
+      "energy": {
+        "required_per_second": 1.0,
+        "min_temperature": 0.0
+      }
+    },
+    {
+      "id": "iron_plate",
+      "label": "Iron plate",
+      "machines": ["stone_furnace"],
+      "source_machines": ["metal_furnace"],
+      "kind": {
+        "type": "Processing"
+      },
+      "duration_secs": 2.0,
+      "duration_ticks": 120,
+      "inputs": [
+        {"kind": "iron_ore", "amount": 1}
+      ],
+      "outputs": [
+        {"kind": "iron_plate", "amount": 1}
+      ],
+      "energy": {
+        "required_per_second": 1.0,
+        "min_temperature": 700.0
+      }
+    },
+    {
+      "id": "copper_plate",
+      "label": "Copper plate",
+      "machines": ["stone_furnace"],
+      "source_machines": ["metal_furnace"],
+      "kind": {
+        "type": "Processing"
+      },
+      "duration_secs": 2.0,
+      "duration_ticks": 120,
+      "inputs": [
+        {"kind": "copper_ore", "amount": 1}
+      ],
+      "outputs": [
+        {"kind": "copper_plate", "amount": 1}
+      ],
+      "energy": {
+        "required_per_second": 1.0,
+        "min_temperature": 700.0
+      }
+    },
+    {
+      "id": "iron_gear",
+      "label": "Iron gear",
+      "machines": ["basic_assembler"],
+      "kind": {
+        "type": "Processing"
+      },
+      "duration_secs": 0.5,
+      "duration_ticks": 30,
+      "inputs": [
+        {"kind": "iron_plate", "amount": 2}
+      ],
+      "outputs": [
+        {"kind": "iron_gear", "amount": 1}
+      ]
+    },
+    {
+      "id": "copper_cable",
+      "label": "Copper cable",
+      "machines": ["basic_assembler"],
+      "kind": {
+        "type": "Processing"
+      },
+      "duration_secs": 0.5,
+      "duration_ticks": 30,
+      "inputs": [
+        {"kind": "copper_plate", "amount": 1}
+      ],
+      "outputs": [
+        {"kind": "copper_cable", "amount": 2}
+      ]
+    },
+    {
+      "id": "iron_stick",
+      "label": "Iron stick",
+      "machines": ["basic_assembler"],
+      "kind": {
+        "type": "Processing"
+      },
+      "duration_secs": 0.5,
+      "duration_ticks": 30,
+      "inputs": [
+        {"kind": "iron_plate", "amount": 1}
+      ],
+      "outputs": [
+        {"kind": "iron_stick", "amount": 2}
+      ]
+    }
+  ]
+}

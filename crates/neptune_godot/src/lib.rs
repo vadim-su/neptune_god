@@ -1,6 +1,7 @@
 use behavior_api::{BehaviorConfigValue, BehaviorStateValue};
 use godot::prelude::*;
 use sim_core::building::{SimBuildingSnapshot, SimBuildingState};
+use sim_core::catalog::CoreBuildingDriver;
 use sim_core::catalog::CoreCatalog;
 use sim_core::catalog::{CoreBuildingDef, CoreBuildingKind, CoreInventoryRole};
 use sim_core::command::SimCommand;
@@ -8,9 +9,12 @@ use sim_core::ids::BuildingId;
 use sim_core::ids::TilePos;
 use sim_core::inventory::SimInventorySnapshot;
 use sim_core::topology::graph::Direction;
+use sim_core::units::DistanceUnits;
 use sim_core::world::SimWorld;
 use sim_core::worldgen::{DEFAULT_WORLD_SEED, WorldGenerator};
 use std::collections::BTreeMap;
+
+const SIM_TICKS_PER_SECOND: f64 = 60.0;
 
 #[derive(Clone, Debug, PartialEq)]
 struct MachineUiSnapshot {
@@ -209,10 +213,22 @@ impl NeptuneSim {
             building.set("def_id", snapshot.def_id.as_str());
             building.set("x", snapshot.origin.x);
             building.set("y", snapshot.origin.y);
+            building.set("direction", direction_name(snapshot.direction));
             building.set(
                 "quarter_turns",
                 quarter_turns_from_direction(snapshot.direction),
             );
+            if let Some(belt) = self.world.belt_tile_at(snapshot.origin) {
+                building.set("input_direction", direction_name(belt.input_direction));
+                building.set(
+                    "input_quarter_turns",
+                    quarter_turns_from_direction(belt.input_direction),
+                );
+                building.set(
+                    "belt_speed_tiles_per_second",
+                    belt_speed_tiles_per_second(&self.world, snapshot.def_id.as_str()),
+                );
+            }
             building.set(
                 "footprint",
                 &tile_pairs_to_var_array(building_footprint_for_godot(
@@ -349,6 +365,40 @@ fn quarter_turns_from_direction(direction: Direction) -> i32 {
         Direction::West => 2,
         Direction::South => 3,
     }
+}
+
+fn direction_name(direction: Direction) -> &'static str {
+    match direction {
+        Direction::East => "east",
+        Direction::North => "north",
+        Direction::West => "west",
+        Direction::South => "south",
+    }
+}
+
+fn belt_speed_tiles_per_second(world: &SimWorld, def_id: &str) -> f64 {
+    let Some(def) = world.catalog().building_by_id(def_id) else {
+        return 0.0;
+    };
+
+    let speed_units_per_tick = match &def.behavior.driver {
+        CoreBuildingDriver::Transport {
+            speed_units_per_tick,
+        }
+        | CoreBuildingDriver::Underground {
+            speed_units_per_tick,
+            ..
+        }
+        | CoreBuildingDriver::Splitter {
+            speed_units_per_tick,
+        } => speed_units_per_tick,
+        CoreBuildingDriver::Noop
+        | CoreBuildingDriver::Inserter { .. }
+        | CoreBuildingDriver::BehaviorHost => return 0.0,
+    };
+
+    f64::from(speed_units_per_tick.raw()) * SIM_TICKS_PER_SECOND
+        / f64::from(DistanceUnits::UNITS_PER_TILE)
 }
 
 fn tile_pairs_to_var_array(tiles: Vec<(i32, i32)>) -> VarArray {
@@ -770,6 +820,26 @@ mod tests {
             building_footprint_for_godot(&world, "basic_miner", 10, 20, 0),
             vec![(10, 20), (10, 21), (11, 20), (11, 21)]
         );
+    }
+
+    #[test]
+    fn render_bridge_names_directions_for_godot() {
+        assert_eq!(direction_name(Direction::East), "east");
+        assert_eq!(direction_name(Direction::North), "north");
+        assert_eq!(direction_name(Direction::West), "west");
+        assert_eq!(direction_name(Direction::South), "south");
+    }
+
+    #[test]
+    fn render_bridge_converts_belt_speed_to_tiles_per_second() {
+        let world = SimWorld::with_catalog(CoreCatalog::for_tests());
+
+        assert!((belt_speed_tiles_per_second(&world, "basic_belt") - 0.9375).abs() < f64::EPSILON);
+        assert!(
+            (belt_speed_tiles_per_second(&world, "accelerated_belt") - 1.40625).abs()
+                < f64::EPSILON
+        );
+        assert!((belt_speed_tiles_per_second(&world, "fast_belt") - 1.875).abs() < f64::EPSILON);
     }
 
     #[test]

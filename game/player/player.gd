@@ -10,6 +10,7 @@ const WALK_BLEND_TIME := 0.12
 var movement_yaw := 0.0
 var velocity := Vector3.ZERO
 var can_move_to: Callable
+var input_blocked := false
 
 @onready var animation_player: AnimationPlayer = get_node_or_null("Model/AnimationPlayer") as AnimationPlayer
 @onready var player_skeleton: Skeleton3D = get_node_or_null("Model/ARM_Player_Rig/Skeleton3D") as Skeleton3D
@@ -39,6 +40,9 @@ func _physics_process(delta: float) -> void:
 
 
 func _movement_input() -> Vector2:
+	if input_blocked:
+		return Vector2.ZERO
+
 	var input := Vector2.ZERO
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
 		input.x -= 1.0

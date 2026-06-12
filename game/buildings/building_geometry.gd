@@ -44,4 +44,4 @@ static func footprint_size_text(footprint: Array) -> String:
 
 
 static func rotation_y_for_quarter_turns(quarter_turns: int) -> float:
-	return deg_to_rad(float(quarter_turns * 90))
+	return deg_to_rad(float(-quarter_turns * 90))

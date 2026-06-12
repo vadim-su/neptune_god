@@ -4,6 +4,8 @@ const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd
 const BuildingRendererScript := preload("res://game/buildings/building_renderer.gd")
 const SelectionOutlineScript := preload("res://game/buildings/selection_outline.gd")
 const MachineWindowScene := preload("res://game/ui/machine_window.tscn")
+const CatalogSelectorScene := preload("res://game/ui/catalog_selector.tscn")
+const HOTBAR_SELECTOR_OWNER_PREFIX := "hotbar:"
 
 @onready var camera: Camera3D = %Camera3D
 @onready var player: PlayerController = %Player
@@ -39,6 +41,7 @@ var blocked_building_tiles := {}
 var building_tile_index := {}
 var selection_outline_root: Node3D
 var machine_window: MachineWindow
+var catalog_selector: Node
 
 
 func _ready() -> void:
@@ -47,6 +50,7 @@ func _ready() -> void:
 	player.can_move_to = Callable(self, "_is_player_position_walkable")
 	environment.build_from_sim(sim)
 	hotbar.selected.connect(_on_hotbar_selected)
+	hotbar.assignment_requested.connect(_on_hotbar_assignment_requested)
 	build_ghost_root = Node3D.new()
 	build_ghost_root.name = "BuildGhost"
 	add_child(build_ghost_root)
@@ -57,6 +61,10 @@ func _ready() -> void:
 	machine_window = MachineWindowScene.instantiate() as MachineWindow
 	$Hud.add_child(machine_window)
 	machine_window.recipe_selected.connect(_on_machine_recipe_selected)
+	catalog_selector = CatalogSelectorScene.instantiate()
+	$Hud.add_child(catalog_selector)
+	catalog_selector.entry_selected.connect(_on_catalog_selector_entry_selected)
+	catalog_selector.closed.connect(_on_catalog_selector_closed)
 	sim.tick_many(3)
 	_update_status_label()
 	_update_camera()
@@ -64,6 +72,7 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	player.input_blocked = catalog_selector != null and catalog_selector.is_open()
 	_update_camera()
 	_update_build_preview()
 
@@ -73,6 +82,12 @@ func _physics_process(_delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if catalog_selector != null and catalog_selector.is_open():
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+			catalog_selector.close_selector()
+			get_viewport().set_input_as_handled()
+		return
+
 	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
 		camera_yaw -= event.relative.x * 0.006
 		camera_elevation = clamp(
@@ -145,6 +160,45 @@ func _on_hotbar_selected(entry_id: String) -> void:
 	build_quarter_turns = 0
 	_update_build_preview()
 	_update_status_label()
+
+
+func _on_hotbar_assignment_requested(slot_index: int) -> void:
+	var owner := "%s%d" % [HOTBAR_SELECTOR_OWNER_PREFIX, slot_index]
+	catalog_selector.open_selector(owner, _building_selector_entries(), "Build Catalog")
+
+
+func _on_catalog_selector_entry_selected(owner_id: String, entry: Dictionary) -> void:
+	if not owner_id.begins_with(HOTBAR_SELECTOR_OWNER_PREFIX):
+		return
+	var slot_index := int(owner_id.trim_prefix(HOTBAR_SELECTOR_OWNER_PREFIX))
+	hotbar.assign_slot(slot_index, entry)
+
+
+func _on_catalog_selector_closed(owner_id: String) -> void:
+	if not owner_id.begins_with(HOTBAR_SELECTOR_OWNER_PREFIX):
+		return
+	var slot_index := int(owner_id.trim_prefix(HOTBAR_SELECTOR_OWNER_PREFIX))
+	hotbar.cancel_assignment(slot_index)
+
+
+func _building_selector_entries() -> Array:
+	var entries: Array = []
+	for raw_definition: Variant in BuildingCatalogScript.definitions():
+		var definition: Dictionary = raw_definition
+		var id := str(definition.get("id", ""))
+		if id.is_empty():
+			continue
+		var label := BuildingCatalogScript.display_name(id)
+		var category := BuildingCatalogScript.ui_type(id)
+		entries.append({
+			"id": id,
+			"label": label,
+			"kind": "building",
+			"category": category,
+			"usage_tags": ["buildable"],
+			"search_text": "%s %s %s" % [id, label, category],
+		})
+	return entries
 
 
 func _update_status_label() -> void:

@@ -67,6 +67,38 @@ func selected_entry_label() -> String:
 	return slots[selected_slot].get("label", "")
 
 
+func assign_slot(index: int, entry: Dictionary) -> void:
+	if index < 0 or index >= HOTBAR_SLOT_COUNT:
+		return
+
+	var normalized := entry.duplicate(true)
+	var id := str(normalized.get("id", ""))
+	if id.is_empty():
+		return
+	normalized["id"] = id
+	if str(normalized.get("label", "")).is_empty():
+		normalized["label"] = BuildingCatalogScript.display_name(id)
+
+	slots[index] = normalized
+	assigning_slot = -1
+	if _icon_renderer != null:
+		_icon_renderer.prepare_icons([id])
+	if index < _icon_rects.size():
+		_icon_rects[index].texture = _slot_texture(index)
+	if index < _slot_buttons.size():
+		_slot_buttons[index].tooltip_text = _slot_tooltip(index)
+	_refresh_visuals()
+	if selected_slot == index:
+		selected.emit(selected_entry_id())
+
+
+func cancel_assignment(index: int = -1) -> void:
+	if index != -1 and assigning_slot != index:
+		return
+	assigning_slot = -1
+	_refresh_visuals()
+
+
 func _hydrate_slots() -> void:
 	slots.clear()
 	for index in HOTBAR_SLOT_COUNT:

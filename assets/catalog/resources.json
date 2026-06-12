@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "resources": [
+    {
+      "id": "iron_ore_patch",
+      "item": "iron_ore",
+      "world_image": "res://assets/images/resource_iron_ore.png",
+      "generation": {
+        "frequency_range": {"min": 45, "max": 70},
+        "radius_range": {"min": 3, "max": 6},
+        "amount_range": {"min": 5000, "max": 13000}
+      }
+    },
+    {
+      "id": "copper_ore_patch",
+      "item": "copper_ore",
+      "world_image": "res://assets/images/resource_copper_ore.png",
+      "generation": {
+        "frequency_range": {"min": 25, "max": 55},
+        "radius_range": {"min": 3, "max": 6},
+        "amount_range": {"min": 4000, "max": 12000}
+      }
+    },
+    {
+      "id": "coal_patch",
+      "item": "coal",
+      "world_image": "res://assets/images/resource_coal.png",
+      "generation": {
+        "frequency_range": {"min": 20, "max": 45},
+        "radius_range": {"min": 2, "max": 5},
+        "amount_range": {"min": 4000, "max": 11000}
+      }
+    }
+  ]
+}

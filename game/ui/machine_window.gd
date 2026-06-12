@@ -2,6 +2,8 @@ extends PanelContainer
 class_name MachineWindow
 
 const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd")
+const ItemCatalogScript := preload("res://game/items/item_catalog.gd")
+const ItemIconRendererScript := preload("res://game/ui/item_icon_renderer.gd")
 
 signal recipe_selected(building_id: int, recipe_id: String)
 
@@ -27,10 +29,14 @@ const WINDOW_RECIPE_HEIGHT := 430.0
 var selected_building_id := -1
 var _dragging := false
 var _drag_offset := Vector2.ZERO
+var _item_icon_renderer: Node
 
 
 func _ready() -> void:
 	add_theme_stylebox_override("panel", _panel_stylebox())
+	_item_icon_renderer = ItemIconRendererScript.new()
+	_item_icon_renderer.name = "ItemIconRenderer"
+	add_child(_item_icon_renderer)
 	header.gui_input.connect(_on_header_gui_input)
 	close_button.pressed.connect(hide_window)
 	visible = false
@@ -60,6 +66,7 @@ func update(building: Dictionary, snapshot: Dictionary) -> void:
 	)
 	window_title.text = BuildingCatalogScript.display_name(str(building["def_id"]))
 	subtitle.text = _subtitle_text(snapshot)
+	_item_icon_renderer.prepare_icons(_snapshot_item_ids(snapshot))
 	_rebuild_content(snapshot)
 
 
@@ -129,7 +136,7 @@ func _add_recipe_controls(recipe_grid_visible: bool, active_recipe: String, reci
 func _add_recipe_grid(parent: Control, active_recipe: String, recipes: Array) -> void:
 	var grid := GridContainer.new()
 	grid.columns = clamp(recipes.size(), 2, 3)
-	grid.custom_minimum_size = Vector2(104 * grid.columns + 6 * (grid.columns - 1), 40)
+	grid.custom_minimum_size = Vector2(112 * grid.columns + 6 * (grid.columns - 1), 48)
 	grid.add_theme_constant_override("h_separation", 6)
 	grid.add_theme_constant_override("v_separation", 6)
 	parent.add_child(grid)
@@ -137,14 +144,15 @@ func _add_recipe_grid(parent: Control, active_recipe: String, recipes: Array) ->
 	for raw_recipe: Variant in recipes:
 		var recipe: Dictionary = raw_recipe
 		var button := Button.new()
-		button.custom_minimum_size = Vector2(104, 40)
-		button.text = _recipe_card_text(recipe)
+		button.custom_minimum_size = Vector2(112, 48)
+		button.text = ""
 		if str(recipe.get("id", "")) == active_recipe:
 			button.add_theme_stylebox_override("normal", _flat_stylebox(ACTIVE_RECIPE_BG, SLOT_BORDER))
 		var recipe_id := str(recipe.get("id", ""))
 		button.pressed.connect(func() -> void:
 			recipe_selected.emit(selected_building_id, recipe_id)
 		)
+		button.add_child(_recipe_card_content(recipe))
 		grid.add_child(button)
 
 
@@ -167,15 +175,29 @@ func _slot_view(slot: Dictionary) -> Control:
 	panel_slot.custom_minimum_size = Vector2(34, 34)
 	panel_slot.add_theme_stylebox_override("panel", _flat_stylebox(SLOT_BG, SLOT_BORDER))
 
-	var label := Label.new()
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	label.add_theme_font_size_override("font_size", 10)
-	label.add_theme_color_override("font_color", TEXT)
 	var item := str(slot.get("item", ""))
 	var amount := int(slot.get("amount", 0))
-	label.text = "" if item.is_empty() else "%s\n%d" % [_short_item_label(item), amount]
-	panel_slot.add_child(label)
+	if item.is_empty():
+		return panel_slot
+
+	var icon := _item_icon(item, Vector2(30, 30))
+	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	icon.offset_left = 2.0
+	icon.offset_top = 2.0
+	icon.offset_right = -2.0
+	icon.offset_bottom = -2.0
+	panel_slot.add_child(icon)
+
+	var amount_label := Label.new()
+	amount_label.text = str(amount)
+	amount_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	amount_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	amount_label.add_theme_font_size_override("font_size", 10)
+	amount_label.add_theme_color_override("font_color", TEXT)
+	amount_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	amount_label.offset_right = -2.0
+	amount_label.offset_bottom = -1.0
+	panel_slot.add_child(amount_label)
 	return panel_slot
 
 
@@ -236,22 +258,70 @@ func _recipe_label_by_id(recipe_id: String, recipes: Array) -> String:
 	return recipe_id.replace("_", " ").capitalize()
 
 
-func _recipe_card_text(recipe: Dictionary) -> String:
+func _recipe_card_content(recipe: Dictionary) -> Control:
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_theme_constant_override("separation", 5)
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	row.offset_left = 5.0
+	row.offset_top = 4.0
+	row.offset_right = -5.0
+	row.offset_bottom = -4.0
+
 	var outputs: Array = recipe.get("outputs", [])
-	var suffix := ""
+	var output: Dictionary = {} if outputs.is_empty() else outputs[0]
+	var item := str(output.get("item", ""))
+	if not item.is_empty():
+		row.add_child(_item_icon(item, Vector2(30, 30)))
+
+	var label := Label.new()
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_font_size_override("font_size", 10)
+	label.add_theme_color_override("font_color", TEXT)
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	if not outputs.is_empty():
-		var output: Dictionary = outputs[0]
-		suffix = "\n%s x%d" % [_short_item_label(str(output.get("item", ""))), int(output.get("amount", 0))]
-	return "%s%s" % [str(recipe.get("label", "")), suffix]
+		label.text = "%s\nx%d" % [str(recipe.get("label", "")), int(output.get("amount", 0))]
+	else:
+		label.text = str(recipe.get("label", ""))
+	row.add_child(label)
+	return row
 
 
-func _short_item_label(item: String) -> String:
-	var words := item.split("_")
-	var label := ""
-	for word in words:
-		if not word.is_empty():
-			label += word.substr(0, 1).to_upper()
-	return label if not label.is_empty() else item.substr(0, min(item.length(), 3)).to_upper()
+func _item_icon(item: String, minimum_size: Vector2) -> TextureRect:
+	var icon := TextureRect.new()
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.custom_minimum_size = minimum_size
+	icon.texture = _item_icon_renderer.texture_for(item) if _item_icon_renderer != null else null
+	icon.tooltip_text = ItemCatalogScript.display_name(item)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	return icon
+
+
+func _snapshot_item_ids(snapshot: Dictionary) -> Array:
+	var ids: Array = []
+	for raw_inventory: Variant in snapshot.get("inventories", []):
+		var inventory: Dictionary = raw_inventory
+		for raw_slot: Variant in inventory.get("slots", []):
+			var slot: Dictionary = raw_slot
+			_add_item_id(ids, str(slot.get("item", "")))
+
+	for raw_recipe: Variant in snapshot.get("recipes", []):
+		var recipe: Dictionary = raw_recipe
+		for raw_input: Variant in recipe.get("inputs", []):
+			var input: Dictionary = raw_input
+			_add_item_id(ids, str(input.get("item", "")))
+		for raw_output: Variant in recipe.get("outputs", []):
+			var output: Dictionary = raw_output
+			_add_item_id(ids, str(output.get("item", "")))
+
+	return ids
+
+
+func _add_item_id(ids: Array, item_id: String) -> void:
+	if not item_id.is_empty() and not ids.has(item_id):
+		ids.append(item_id)
 
 
 func _panel_stylebox() -> StyleBoxFlat:

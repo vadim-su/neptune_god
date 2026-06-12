@@ -3,7 +3,13 @@ class_name BuildingRenderer
 
 const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd")
 const BuildingGeometryScript := preload("res://game/buildings/building_geometry.gd")
+const ConveyorBeltSurfaceShader := preload("res://game/buildings/conveyor_belt_surface.gdshader")
+const ConveyorBeltSurfaceTexture := preload("res://assets/images/buildings/belt_surface.png")
 const BUILDING_VISUAL_Y := 0.24
+const BELT_CORNER_DEFAULT_OUTPUT_QUARTER_TURNS := 3
+const BELT_CORNER_MIRROR_DEFAULT_OUTPUT_QUARTER_TURNS := 1
+
+static var _belt_surface_material_cache: Dictionary = {}
 
 
 static func render_from_sim(
@@ -30,10 +36,12 @@ static func render_from_sim(
 		if not BuildingCatalogScript.is_walkable(def_id):
 			_add_blocked_building_tiles(blocked_building_tiles, footprint)
 
-		var model := _instantiate_building_model(def_id)
+		var model_info := _building_model_info(building)
+		var model := _instantiate_building_model(def_id, str(model_info["path"]))
 		if model != null:
 			model.position = BuildingGeometryScript.footprint_center(footprint)
-			model.rotation.y = BuildingGeometryScript.rotation_y_for_quarter_turns(int(building["quarter_turns"]))
+			model.rotation.y = float(model_info["rotation_y"])
+			_apply_belt_surface_materials(model, building)
 			building_node.add_child(model)
 		else:
 			_add_fallback_building_tiles(building_node, footprint, material)
@@ -51,8 +59,31 @@ static func _add_blocked_building_tiles(index: Dictionary, footprint: Array) -> 
 		index[Vector2i(int(tile["x"]), int(tile["y"]))] = true
 
 
-static func _instantiate_building_model(def_id: String) -> Node3D:
-	var path := BuildingCatalogScript.model_path(def_id)
+static func _building_model_info(building: Dictionary) -> Dictionary:
+	var def_id := str(building["def_id"])
+	var output_quarter_turns := int(building["quarter_turns"])
+	var input_quarter_turns := int(building.get("input_quarter_turns", output_quarter_turns))
+	if not building.has("input_quarter_turns") or input_quarter_turns == output_quarter_turns:
+		return {
+			"path": BuildingCatalogScript.model_variant_path(def_id, "straight"),
+			"rotation_y": BuildingGeometryScript.rotation_y_for_quarter_turns(output_quarter_turns),
+		}
+
+	var variant := "corner_mirror"
+	var default_output_quarter_turns := BELT_CORNER_MIRROR_DEFAULT_OUTPUT_QUARTER_TURNS
+	if input_quarter_turns == posmod(output_quarter_turns + 1, 4):
+		variant = "corner"
+		default_output_quarter_turns = BELT_CORNER_DEFAULT_OUTPUT_QUARTER_TURNS
+
+	return {
+		"path": BuildingCatalogScript.model_variant_path(def_id, variant),
+		"rotation_y": BuildingGeometryScript.rotation_y_for_quarter_turns(
+			posmod(output_quarter_turns - default_output_quarter_turns, 4)
+		),
+	}
+
+
+static func _instantiate_building_model(def_id: String, path: String) -> Node3D:
 	if path.is_empty():
 		return null
 
@@ -67,6 +98,56 @@ static func _instantiate_building_model(def_id: String) -> Node3D:
 		return null
 
 	return instance
+
+
+static func _apply_belt_surface_materials(node: Node, building: Dictionary) -> void:
+	if not building.has("belt_speed_tiles_per_second"):
+		return
+
+	if node is MeshInstance3D:
+		var mesh_instance := node as MeshInstance3D
+		if _is_belt_surface_mesh(mesh_instance):
+			mesh_instance.material_override = _belt_surface_material(
+				str(building["def_id"]),
+				float(building["belt_speed_tiles_per_second"])
+			)
+
+	for child: Node in node.get_children():
+		_apply_belt_surface_materials(child, building)
+
+
+static func _is_belt_surface_mesh(mesh_instance: MeshInstance3D) -> bool:
+	var node_name := str(mesh_instance.name).to_lower()
+	if node_name.contains("belt_surface"):
+		return true
+	if mesh_instance.mesh != null:
+		var mesh_name := str(mesh_instance.mesh.resource_name).to_lower()
+		return mesh_name.contains("belt_surface")
+	return false
+
+
+static func _belt_surface_material(def_id: String, speed_tiles_per_second: float) -> ShaderMaterial:
+	var cache_key := "%s:%0.4f" % [def_id, speed_tiles_per_second]
+	if _belt_surface_material_cache.has(cache_key):
+		return _belt_surface_material_cache[cache_key]
+
+	var material := ShaderMaterial.new()
+	material.shader = ConveyorBeltSurfaceShader
+	material.set_shader_parameter("belt_texture", ConveyorBeltSurfaceTexture)
+	material.set_shader_parameter("belt_speed_tiles_per_second", speed_tiles_per_second)
+	material.set_shader_parameter("tint", _belt_surface_tint(def_id))
+	_belt_surface_material_cache[cache_key] = material
+	return material
+
+
+static func _belt_surface_tint(def_id: String) -> Color:
+	match def_id:
+		"accelerated_belt":
+			return Color(0.88, 0.96, 1.0, 1.0)
+		"fast_belt":
+			return Color(0.76, 0.90, 1.0, 1.0)
+		_:
+			return Color.WHITE
 
 
 static func _add_fallback_building_tiles(parent: Node3D, footprint: Array, material: Material) -> void:

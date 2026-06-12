@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "terrain": [
+    {
+      "id": "ground",
+      "image": "res://assets/images/ground_tile.png",
+      "color": "#2E422E",
+      "buildable": true,
+      "weight": 1
+    },
+    {
+      "id": "water",
+      "image": "res://assets/images/terrain_water.png",
+      "color": "#1A3D57",
+      "buildable": false,
+      "weight": 1
+    },
+    {
+      "id": "stone",
+      "image": "res://assets/images/terrain_stone.png",
+      "color": "#52544F",
+      "buildable": false,
+      "weight": 1
+    }
+  ]
+}

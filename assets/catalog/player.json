@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "equipment_slots": [
+    {"id": "head", "name": "Head"},
+    {"id": "torso", "name": "Torso"},
+    {"id": "back", "name": "Back"},
+    {"id": "waist", "name": "Waist"},
+    {"id": "legs", "name": "Legs"},
+    {"id": "feet", "name": "Feet"},
+    {"id": "hands", "name": "Hands"}
+  ],
+  "starting_equipment": [
+    {"slot": "legs", "item": "work_pants"},
+    {"slot": "waist", "item": "tool_belt"},
+    {"slot": "back", "item": "small_backpack"}
+  ]
+}

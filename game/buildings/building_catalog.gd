@@ -24,6 +24,8 @@ const FALLBACK_DEFINITIONS := {
 		"ui_type": "Transport",
 		"state_label": "transport",
 		"model": "res://assets/models/logistics/conveyor_belt_straight.blend",
+		"model_corner": "res://assets/models/logistics/conveyor_belt_corner.blend",
+		"model_corner_mirror": "res://assets/models/logistics/conveyor_belt_corner_mirror.blend",
 		"color": "#2E383A",
 		"walkable": true,
 	},
@@ -56,6 +58,8 @@ const FALLBACK_DEFINITIONS := {
 		"ui_type": "Transport",
 		"state_label": "transport",
 		"model": "res://assets/models/logistics/conveyor_belt_straight.blend",
+		"model_corner": "res://assets/models/logistics/conveyor_belt_corner.blend",
+		"model_corner_mirror": "res://assets/models/logistics/conveyor_belt_corner_mirror.blend",
 		"color": "#3D4C57",
 		"walkable": true,
 	},
@@ -64,6 +68,8 @@ const FALLBACK_DEFINITIONS := {
 		"ui_type": "Transport",
 		"state_label": "transport",
 		"model": "res://assets/models/logistics/conveyor_belt_straight.blend",
+		"model_corner": "res://assets/models/logistics/conveyor_belt_corner.blend",
+		"model_corner_mirror": "res://assets/models/logistics/conveyor_belt_corner_mirror.blend",
 		"color": "#2E475C",
 		"walkable": true,
 	},
@@ -91,6 +97,17 @@ static var _definitions: Dictionary = {}
 
 static func model_path(def_id: String) -> String:
 	return str(definition(def_id).get("model", ""))
+
+
+static func model_variant_path(def_id: String, variant: String) -> String:
+	var def := definition(def_id)
+	match variant:
+		"corner":
+			return str(def.get("model_corner", def.get("model", "")))
+		"corner_mirror":
+			return str(def.get("model_corner_mirror", def.get("model", "")))
+		_:
+			return str(def.get("model", ""))
 
 
 static func color(def_id: String) -> Color:

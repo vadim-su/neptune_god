@@ -1,0 +1,125 @@
+{
+  "schema": 1,
+  "profiles": [
+    {
+      "id": "default",
+      "day_night": {
+        "day_length_ticks": 24000,
+        "solar_curve": {
+          "type": "GameLike",
+          "sunrise_start": 0.20,
+          "full_day_start": 0.30,
+          "full_day_end": 0.70,
+          "sunset_end": 0.82
+        }
+      },
+      "starting_area": {
+        "radius": 48,
+        "terrain": "ground",
+        "clear_non_buildable": true
+      },
+      "terrain_layers": [
+        {
+          "terrain": "water",
+          "threshold": 0.78,
+          "scale": 96.0,
+          "min_distance_from_spawn": 64
+        },
+        {
+          "terrain": "stone",
+          "threshold": 0.72,
+          "scale": 64.0,
+          "min_distance_from_spawn": 56
+        }
+      ],
+      "resources": [
+        {
+          "resource": "iron_ore_patch",
+          "allowed_terrains": ["ground"],
+          "patch_frequency": {
+            "base": 25,
+            "distance_curve": {
+              "start_distance": 64,
+              "end_distance": 512,
+              "multiplier_at_end": 3.0
+            }
+          },
+          "patch_radius": {
+            "near": {"min": 3, "max": 5},
+            "far": {"min": 8, "max": 13}
+          },
+          "richness": {
+            "near": {"min": 4000, "max": 9000},
+            "far": {"min": 30000, "max": 90000}
+          }
+        },
+        {
+          "resource": "copper_ore_patch",
+          "allowed_terrains": ["ground"],
+          "patch_frequency": {
+            "base": 20,
+            "distance_curve": {
+              "start_distance": 64,
+              "end_distance": 512,
+              "multiplier_at_end": 3.0
+            }
+          },
+          "patch_radius": {
+            "near": {"min": 3, "max": 5},
+            "far": {"min": 7, "max": 12}
+          },
+          "richness": {
+            "near": {"min": 3500, "max": 8000},
+            "far": {"min": 25000, "max": 80000}
+          }
+        },
+        {
+          "resource": "coal_patch",
+          "allowed_terrains": ["ground"],
+          "patch_frequency": {
+            "base": 18,
+            "distance_curve": {
+              "start_distance": 64,
+              "end_distance": 512,
+              "multiplier_at_end": 2.6
+            }
+          },
+          "patch_radius": {
+            "near": {"min": 2, "max": 4},
+            "far": {"min": 6, "max": 11}
+          },
+          "richness": {
+            "near": {"min": 3000, "max": 7000},
+            "far": {"min": 22000, "max": 70000}
+          }
+        }
+      ],
+      "starting_resources": [
+        {
+          "resource": "iron_ore_patch",
+          "patch_count": 1,
+          "distance_range": {"min": 8, "max": 20},
+          "radius_range": {"min": 4, "max": 6},
+          "amount_range": {"min": 8000, "max": 14000},
+          "allowed_terrains": ["ground"]
+        },
+        {
+          "resource": "copper_ore_patch",
+          "patch_count": 1,
+          "distance_range": {"min": 12, "max": 28},
+          "radius_range": {"min": 4, "max": 6},
+          "amount_range": {"min": 7000, "max": 13000},
+          "allowed_terrains": ["ground"]
+        },
+        {
+          "resource": "coal_patch",
+          "patch_count": 1,
+          "distance_range": {"min": 10, "max": 26},
+          "radius_range": {"min": 3, "max": 5},
+          "amount_range": {"min": 6000, "max": 12000},
+          "allowed_terrains": ["ground"]
+        }
+      ]
+    }
+  ]
+}
