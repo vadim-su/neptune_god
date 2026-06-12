@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://bxcmktlb24c3i"]
 
 [ext_resource type="Script" uid="uid://bhq6n3elv7c42" path="res://game/player/player.gd" id="1_player"]
-[ext_resource type="PackedScene" uid="uid://bkxyrky6qx3fu" path="res://assets/models/player_engineer_refined.blend" id="2_model"]
+[ext_resource type="PackedScene" path="res://assets/models/player/player_engineer_refined.blend" id="2_model"]
 
 [node name="Player" type="Node3D" unique_id=1572966070]
 script = ExtResource("1_player")

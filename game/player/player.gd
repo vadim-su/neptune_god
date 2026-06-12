@@ -4,10 +4,19 @@ class_name PlayerController
 const MOVE_SPEED := 9.0
 const RUN_MULTIPLIER := 1.55
 const MAX_COLLISION_STEP := 0.2
+const WALK_ANIMATION := "Walk"
+const WALK_BLEND_TIME := 0.12
 
 var movement_yaw := 0.0
 var velocity := Vector3.ZERO
 var can_move_to: Callable
+
+@onready var animation_player: AnimationPlayer = get_node_or_null("Model/AnimationPlayer") as AnimationPlayer
+@onready var player_skeleton: Skeleton3D = get_node_or_null("Model/ARM_Player_Rig/Skeleton3D") as Skeleton3D
+
+
+func _ready() -> void:
+	_configure_walk_animation()
 
 
 func _physics_process(delta: float) -> void:
@@ -26,6 +35,7 @@ func _physics_process(delta: float) -> void:
 		rotation.y = atan2(direction.x, direction.z)
 	else:
 		velocity = Vector3.ZERO
+	_update_walk_animation(delta)
 
 
 func _movement_input() -> Vector2:
@@ -76,3 +86,28 @@ func _can_stand_at(position: Vector3) -> bool:
 	if can_move_to.is_valid():
 		return bool(can_move_to.call(position))
 	return true
+
+
+func _configure_walk_animation() -> void:
+	if animation_player == null or not animation_player.has_animation(WALK_ANIMATION):
+		return
+
+	var walk_animation := animation_player.get_animation(WALK_ANIMATION)
+	walk_animation.loop_mode = Animation.LOOP_LINEAR
+
+
+func _update_walk_animation(delta: float) -> void:
+	if animation_player == null or not animation_player.has_animation(WALK_ANIMATION):
+		return
+
+	var speed_ratio := velocity.length() / MOVE_SPEED
+	if speed_ratio > 0.05:
+		animation_player.speed_scale = clamp(speed_ratio, 0.75, RUN_MULTIPLIER)
+		if animation_player.current_animation != WALK_ANIMATION or not animation_player.is_playing():
+			animation_player.play(WALK_ANIMATION, WALK_BLEND_TIME)
+		return
+
+	if animation_player.is_playing():
+		animation_player.stop()
+	if player_skeleton != null:
+		player_skeleton.reset_bone_poses()

@@ -18,13 +18,13 @@ const GHOST_VALID_COLOR := Color(0.28, 0.78, 1.0, 0.38)
 const GHOST_BLOCKED_COLOR := Color(1.0, 0.22, 0.18, 0.38)
 
 const BUILDING_MODEL_PATHS := {
-	"basic_miner": "res://assets/models/basic_mining_drill.blend",
-	"basic_belt": "res://assets/models/conveyor_belt_straight.blend",
-	"accelerated_belt": "res://assets/models/conveyor_belt_straight.blend",
-	"fast_belt": "res://assets/models/conveyor_belt_straight.blend",
-	"basic_splitter": "res://assets/models/conveyor_splitter.blend",
-	"basic_inserter": "res://assets/models/industrial_robot_arm.blend",
-	"stone_furnace": "res://assets/models/stone_industrial_furnace.blend",
+	"basic_miner": "res://assets/models/buildings/basic_mining_drill.blend",
+	"basic_belt": "res://assets/models/logistics/conveyor_belt_straight.blend",
+	"accelerated_belt": "res://assets/models/logistics/conveyor_belt_straight.blend",
+	"fast_belt": "res://assets/models/logistics/conveyor_belt_straight.blend",
+	"basic_splitter": "res://assets/models/logistics/conveyor_splitter.blend",
+	"basic_inserter": "res://assets/models/buildings/industrial_robot_arm.blend",
+	"stone_furnace": "res://assets/models/buildings/stone_industrial_furnace.blend",
 }
 
 const BUILDING_COLORS := {
