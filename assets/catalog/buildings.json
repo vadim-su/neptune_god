@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "buildings": [
+	{
+	  "id": "basic_miner",
+	  "display_name": "Miner",
+	  "ui_type": "Machine",
+	  "state_label": "machine",
+	  "model": "res://assets/models/buildings/basic_mining_drill.blend",
+	  "color": "#617A5C",
+	  "glyph": "M",
+	  "walkable": false
+	},
+	{
+	  "id": "wooden_chest",
+	  "display_name": "Chest",
+	  "ui_type": "Container",
+	  "state_label": "idle",
+	  "model": "",
+	  "color": "#7A512E",
+	  "glyph": "C",
+	  "walkable": false
+	},
+	{
+	  "id": "basic_belt",
+	  "display_name": "Belt",
+	  "ui_type": "Transport",
+	  "state_label": "transport",
+	  "model": "res://assets/models/logistics/conveyor_belt_straight.blend",
+	  "color": "#2E383A",
+	  "glyph": "B",
+	  "walkable": true
+	},
+	{
+	  "id": "stone_furnace",
+	  "display_name": "Stone Furnace",
+	  "ui_type": "Machine",
+	  "state_label": "machine",
+	  "model": "res://assets/models/buildings/stone_industrial_furnace.blend",
+	  "color": "#6B665C",
+	  "glyph": "F",
+	  "walkable": false
+	},
+	{
+	  "id": "basic_inserter",
+	  "display_name": "Inserter",
+	  "ui_type": "Inserter",
+	  "state_label": "inserter",
+	  "model": "res://assets/models/buildings/industrial_robot_arm.blend",
+	  "color": "#8A7538",
+	  "glyph": "I",
+	  "walkable": false
+	},
+	{
+	  "id": "basic_assembler",
+	  "display_name": "Assembler",
+	  "ui_type": "Machine",
+	  "state_label": "machine",
+	  "model": "",
+	  "color": "#475C75",
+	  "glyph": "A",
+	  "walkable": false
+	},
+	{
+	  "id": "accelerated_belt",
+	  "display_name": "Accelerated Belt",
+	  "ui_type": "Transport",
+	  "state_label": "transport",
+	  "model": "res://assets/models/logistics/conveyor_belt_straight.blend",
+	  "color": "#3D4C57",
+	  "glyph": "B+",
+	  "walkable": true
+	},
+	{
+	  "id": "fast_belt",
+	  "display_name": "Fast Belt",
+	  "ui_type": "Transport",
+	  "state_label": "transport",
+	  "model": "res://assets/models/logistics/conveyor_belt_straight.blend",
+	  "color": "#2E475C",
+	  "glyph": "B++",
+	  "walkable": true
+	},
+	{
+	  "id": "basic_splitter",
+	  "display_name": "Splitter",
+	  "ui_type": "Transport",
+	  "state_label": "transport",
+	  "model": "res://assets/models/logistics/conveyor_splitter.blend",
+	  "color": "#3D3D4C",
+	  "glyph": "S",
+	  "walkable": true
+	},
+	{
+	  "id": "basic_underground_belt",
+	  "display_name": "Underground Belt",
+	  "ui_type": "Transport",
+	  "state_label": "transport",
+	  "model": "",
+	  "color": "#2E2E38",
+	  "glyph": "U",
+	  "walkable": true
+	}
+  ]
+}

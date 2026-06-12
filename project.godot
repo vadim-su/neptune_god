@@ -17,7 +17,7 @@ config/icon="res://icon.svg"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/rust_build/plugin.cfg")
+enabled=PackedStringArray("res://addons/resource_catalog/plugin.cfg", "res://addons/rust_build/plugin.cfg")
 
 [physics]
 

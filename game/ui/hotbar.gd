@@ -3,6 +3,7 @@ extends Control
 signal selected(entry_id: String)
 signal assignment_requested(slot_index: int)
 
+const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd")
 const HOTBAR_SLOT_COUNT := 10
 const SLOT_SIZE := Vector2(58.0, 58.0)
 const SLOT_GAP := 8.0
@@ -68,7 +69,12 @@ func _hydrate_slots() -> void:
 	slots.clear()
 	for index in HOTBAR_SLOT_COUNT:
 		if index < DEFAULT_ENTRIES.size():
-			slots.append(DEFAULT_ENTRIES[index])
+			var entry: Dictionary = DEFAULT_ENTRIES[index].duplicate()
+			var id := str(entry.get("id", ""))
+			if not id.is_empty():
+				entry["label"] = BuildingCatalogScript.display_name(id)
+				entry["glyph"] = BuildingCatalogScript.glyph(id)
+			slots.append(entry)
 		else:
 			slots.append({})
 
