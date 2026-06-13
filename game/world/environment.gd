@@ -29,24 +29,55 @@ const RESOURCE_TEXTURES := {
 }
 
 const TERRAIN_BLEND_SHADER := preload("res://game/world/terrain_blend.gdshader")
+const CHUNK_BLEND_MARGIN := 1
 
 var _map_root: Node3D
+var _terrain_chunks := {}
+var _resource_chunks := {}
 
 
 func build_from_sim(sim: NeptuneSim) -> void:
+	clear_generated_map()
+
+	var tiles: Array = sim.map_tiles()
+	_terrain_chunks[Vector2i.ZERO] = _add_terrain_chunk(Vector2i.ZERO, tiles)
+	_resource_chunks[Vector2i.ZERO] = _add_resource_chunk(Vector2i.ZERO, tiles)
+
+
+func clear_generated_map() -> void:
 	if _map_root != null:
 		_map_root.queue_free()
 
 	_map_root = Node3D.new()
 	_map_root.name = "GeneratedMap"
 	add_child(_map_root)
-
-	var tiles: Array = sim.map_tiles()
-	_add_terrain(tiles)
-	_add_resources(tiles)
+	_terrain_chunks.clear()
+	_resource_chunks.clear()
 
 
-func _add_terrain(tiles: Array) -> void:
+func sync_chunks(sim: NeptuneSim, visible_chunks: Array) -> void:
+	if _map_root == null:
+		clear_generated_map()
+
+	var visible_lookup := {}
+	for raw_chunk: Variant in visible_chunks:
+		var chunk: Vector2i = raw_chunk
+		visible_lookup[chunk] = true
+		if not _terrain_chunks.has(chunk):
+			var tiles: Array = sim.chunk_tiles_with_margin(chunk.x, chunk.y, CHUNK_BLEND_MARGIN)
+			_terrain_chunks[chunk] = _add_terrain_chunk(chunk, tiles)
+			_resource_chunks[chunk] = _add_resource_chunk(chunk, tiles)
+
+	for chunk: Vector2i in _terrain_chunks.keys():
+		var is_visible := visible_lookup.has(chunk)
+		var terrain_node := _terrain_chunks[chunk] as Node3D
+		terrain_node.visible = is_visible
+		if _resource_chunks.has(chunk):
+			var resource_node := _resource_chunks[chunk] as Node3D
+			resource_node.visible = is_visible
+
+
+func _add_terrain_chunk(chunk: Vector2i, tiles: Array) -> MeshInstance3D:
 	var terrain_by_pos := {}
 	for raw_tile: Variant in tiles:
 		var tile: Dictionary = raw_tile
@@ -60,6 +91,8 @@ func _add_terrain(tiles: Array) -> void:
 
 	for raw_tile: Variant in tiles:
 		var tile: Dictionary = raw_tile
+		if not bool(tile.get("render", true)):
+			continue
 		_add_blended_tile_geometry(
 			vertices,
 			normals,
@@ -82,10 +115,11 @@ func _add_terrain(tiles: Array) -> void:
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 	var instance := MeshInstance3D.new()
-	instance.name = "Terrain"
+	instance.name = "Terrain_%d_%d" % [chunk.x, chunk.y]
 	instance.mesh = mesh
 	instance.material_override = _terrain_blend_material()
 	_map_root.add_child(instance)
+	return instance
 
 
 func _add_blended_tile_geometry(
@@ -184,14 +218,16 @@ func _resource_material(resource_id: String) -> StandardMaterial3D:
 	return material
 
 
-func _add_resources(tiles: Array) -> void:
+func _add_resource_chunk(chunk: Vector2i, tiles: Array) -> Node3D:
 	var resource_root := Node3D.new()
-	resource_root.name = "Resources"
+	resource_root.name = "Resources_%d_%d" % [chunk.x, chunk.y]
 	_map_root.add_child(resource_root)
 
 	var positions_by_resource := {}
 	for raw_tile: Variant in tiles:
 		var tile: Dictionary = raw_tile
+		if not bool(tile.get("render", true)):
+			continue
 		var resource_id: String = tile["resource"]
 		if resource_id.is_empty():
 			continue
@@ -220,6 +256,7 @@ func _add_resources(tiles: Array) -> void:
 		instance.multimesh = multimesh
 		instance.material_override = _resource_material(resource_id)
 		resource_root.add_child(instance)
+	return resource_root
 
 
 func _bounds_for_tiles(tiles: Array) -> Rect2i:

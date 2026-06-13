@@ -18,12 +18,15 @@ const HOTBAR_SELECTOR_OWNER_PREFIX := "hotbar:"
 @onready var hotbar = %Hotbar
 @onready var environment: Node3D = $Environment
 
-const MAP_RADIUS := 72
 const CAMERA_MIN_DISTANCE := 10.0
 const CAMERA_MAX_DISTANCE := 140.0
 const CAMERA_TARGET_HEIGHT := 0.75
+const CAMERA_GENERATION_MARGIN_TILES := 16
+const CAMERA_FOOTPRINT_FALLBACK_RADIUS := 48
 const BUILD_GHOST_Y := 0.075
 const PLAYER_COLLISION_RADIUS := 0.32
+const PLAYER_ZONE_RADIUS := 12.0
+const PLAYER_ZONE_Y := 0.045
 const GHOST_VALID_COLOR := Color(0.28, 0.78, 1.0, 0.38)
 const GHOST_BLOCKED_COLOR := Color(1.0, 0.22, 0.18, 0.38)
 
@@ -48,6 +51,11 @@ var machine_window: MachineWindow
 var catalog_selector: Node
 var inventory_window: Node
 var dev_console: Node
+var chunk_size := 32
+var visible_chunk_rect_valid := false
+var visible_chunk_rect := Rect2i()
+var player_zone_overlay: MeshInstance3D
+var initialized := false
 
 
 func _ready() -> void:
@@ -63,9 +71,10 @@ func _ready() -> void:
 	):
 		push_error("Failed to configure simulation catalogs")
 		return
-	sim.generate_starting_map(MAP_RADIUS)
+	chunk_size = int(sim.chunk_size())
 	player.can_move_to = Callable(self, "_is_player_position_walkable")
-	environment.build_from_sim(sim)
+	_update_camera()
+	_sync_world_around_camera(true)
 	hotbar.selected.connect(_on_hotbar_selected)
 	hotbar.assignment_requested.connect(_on_hotbar_assignment_requested)
 	build_ghost_root = Node3D.new()
@@ -75,6 +84,7 @@ func _ready() -> void:
 	selection_outline_root.name = "SelectionOutline"
 	selection_outline_root.visible = false
 	add_child(selection_outline_root)
+	_create_player_zone_overlay()
 	machine_window = MachineWindowScene.instantiate() as MachineWindow
 	$Hud.add_child(machine_window)
 	machine_window.recipe_selected.connect(_on_machine_recipe_selected)
@@ -93,6 +103,7 @@ func _ready() -> void:
 	sim.tick_many(3)
 	_update_status_label()
 	_update_camera()
+	initialized = true
 
 
 func _catalog_rows(catalog_kind: String) -> Array:
@@ -110,10 +121,15 @@ func _catalog_rows(catalog_kind: String) -> Array:
 
 
 func _process(_delta: float) -> void:
+	if not initialized:
+		return
+
 	player.input_blocked = _ui_blocks_gameplay_input()
 	if inventory_window != null and inventory_window.is_open():
 		_update_inventory_window()
 	_update_camera()
+	_sync_world_around_camera(false)
+	_update_player_zone_overlay()
 	_update_build_preview()
 
 
@@ -216,6 +232,157 @@ func _update_camera() -> void:
 	)
 	camera.global_position = target + offset
 	camera.look_at(target, Vector3.UP)
+
+
+func _sync_world_around_camera(force: bool) -> void:
+	var tile_rect := _camera_ground_tile_rect()
+	var min_tile := tile_rect.position - Vector2i(CAMERA_GENERATION_MARGIN_TILES, CAMERA_GENERATION_MARGIN_TILES)
+	var max_tile := tile_rect.position + tile_rect.size - Vector2i.ONE + Vector2i(CAMERA_GENERATION_MARGIN_TILES, CAMERA_GENERATION_MARGIN_TILES)
+	var player_tile := _world_to_tile(player.global_position)
+	min_tile = Vector2i(mini(min_tile.x, player_tile.x), mini(min_tile.y, player_tile.y))
+	max_tile = Vector2i(maxi(max_tile.x, player_tile.x), maxi(max_tile.y, player_tile.y))
+
+	var min_chunk := _tile_to_chunk(min_tile)
+	var max_chunk := _tile_to_chunk(max_tile)
+	var chunk_rect := Rect2i(min_chunk, max_chunk - min_chunk + Vector2i.ONE)
+	if not force and visible_chunk_rect_valid and visible_chunk_rect == chunk_rect:
+		return
+
+	sim.ensure_generated_rect(
+		min_chunk.x * chunk_size,
+		min_chunk.y * chunk_size,
+		(max_chunk.x + 1) * chunk_size - 1,
+		(max_chunk.y + 1) * chunk_size - 1
+	)
+	environment.sync_chunks(sim, _chunks_in_rect(min_chunk, max_chunk))
+	visible_chunk_rect = chunk_rect
+	visible_chunk_rect_valid = true
+	_update_status_label()
+
+
+func _camera_ground_tile_rect() -> Rect2i:
+	var viewport_size := get_viewport().get_visible_rect().size
+	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
+		return _fallback_ground_tile_rect()
+
+	var ground_points: Array[Vector2] = []
+	var corners := [
+		Vector2.ZERO,
+		Vector2(viewport_size.x, 0.0),
+		viewport_size,
+		Vector2(0.0, viewport_size.y),
+	]
+	for corner: Vector2 in corners:
+		var origin := camera.project_ray_origin(corner)
+		var direction := camera.project_ray_normal(corner)
+		if absf(direction.y) < 0.0001:
+			continue
+		var distance := -origin.y / direction.y
+		if distance < 0.0:
+			continue
+		var hit := origin + direction * distance
+		ground_points.append(Vector2(hit.x, hit.z))
+
+	if ground_points.is_empty():
+		return _fallback_ground_tile_rect()
+
+	var min_x := ground_points[0].x
+	var max_x := ground_points[0].x
+	var min_y := ground_points[0].y
+	var max_y := ground_points[0].y
+	for point: Vector2 in ground_points:
+		min_x = minf(min_x, point.x)
+		max_x = maxf(max_x, point.x)
+		min_y = minf(min_y, point.y)
+		max_y = maxf(max_y, point.y)
+
+	var min_tile := Vector2i(int(floor(min_x - 0.5)), int(floor(min_y - 0.5)))
+	var max_tile := Vector2i(int(ceil(max_x + 0.5)), int(ceil(max_y + 0.5)))
+	return Rect2i(min_tile, max_tile - min_tile + Vector2i.ONE)
+
+
+func _fallback_ground_tile_rect() -> Rect2i:
+	var center := _world_to_tile(player.global_position)
+	var radius := CAMERA_FOOTPRINT_FALLBACK_RADIUS
+	return Rect2i(center - Vector2i(radius, radius), Vector2i(radius * 2 + 1, radius * 2 + 1))
+
+
+func _world_to_tile(position: Vector3) -> Vector2i:
+	return Vector2i(int(round(position.x)), int(round(position.z)))
+
+
+func _tile_to_chunk(tile: Vector2i) -> Vector2i:
+	return Vector2i(
+		int(floor(float(tile.x) / float(chunk_size))),
+		int(floor(float(tile.y) / float(chunk_size)))
+	)
+
+
+func _chunks_in_rect(min_chunk: Vector2i, max_chunk: Vector2i) -> Array:
+	var chunks: Array[Vector2i] = []
+	for chunk_y in range(min_chunk.y, max_chunk.y + 1):
+		for chunk_x in range(min_chunk.x, max_chunk.x + 1):
+			chunks.append(Vector2i(chunk_x, chunk_y))
+	return chunks
+
+
+func _create_player_zone_overlay() -> void:
+	player_zone_overlay = MeshInstance3D.new()
+	player_zone_overlay.name = "PlayerZoneOverlay"
+	player_zone_overlay.mesh = _player_zone_mesh()
+	player_zone_overlay.material_override = _transparent_material(Color(0.28, 0.78, 1.0, 0.18))
+	add_child(player_zone_overlay)
+	_update_player_zone_overlay()
+
+
+func _update_player_zone_overlay() -> void:
+	if player_zone_overlay == null:
+		return
+	player_zone_overlay.global_position = Vector3(player.global_position.x, PLAYER_ZONE_Y, player.global_position.z)
+
+
+func _player_zone_mesh() -> ArrayMesh:
+	var segments := 96
+	var inner_radius := PLAYER_ZONE_RADIUS - 0.08
+	var outer_radius := PLAYER_ZONE_RADIUS + 0.08
+	var vertices := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+
+	for index in range(segments):
+		var angle := TAU * float(index) / float(segments)
+		var direction := Vector3(cos(angle), 0.0, sin(angle))
+		vertices.append(direction * inner_radius)
+		vertices.append(direction * outer_radius)
+		normals.append(Vector3.UP)
+		normals.append(Vector3.UP)
+		colors.append(Color(0.28, 0.78, 1.0, 0.10))
+		colors.append(Color(0.28, 0.78, 1.0, 0.34))
+
+	for index in range(segments):
+		var next_index := (index + 1) % segments
+		var inner_a := index * 2
+		var outer_a := inner_a + 1
+		var inner_b := next_index * 2
+		var outer_b := inner_b + 1
+		indices.append(inner_a)
+		indices.append(outer_a)
+		indices.append(outer_b)
+		indices.append(inner_a)
+		indices.append(outer_b)
+		indices.append(inner_b)
+
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 func _on_hotbar_selected(entry_id: String) -> void:

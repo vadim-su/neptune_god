@@ -26,6 +26,8 @@ use sim_core::catalog::behavior_config_from_parts;
 use sim_core::command::SimCommand;
 use sim_core::energy::PowerDef;
 use sim_core::ids::BuildingId;
+use sim_core::ids::CHUNK_SIZE;
+use sim_core::ids::ChunkPos;
 use sim_core::ids::ItemKindId;
 use sim_core::ids::TilePos;
 use sim_core::inventory::{InsertMode, SimInventorySnapshot};
@@ -38,7 +40,7 @@ use sim_core::worldgen::{
     ResourceRuleDef, StartingAreaDef, StartingResourceDef, TerrainLayerDef, WorldGenProfile,
     WorldGenerator, default_profile,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const SIM_TICKS_PER_SECOND: f64 = 60.0;
 
@@ -1092,6 +1094,7 @@ pub struct NeptuneSim {
     configured: bool,
     map_min: TilePos,
     map_max: TilePos,
+    generated_chunks: BTreeSet<ChunkPos>,
     selected_recipes: BTreeMap<BuildingId, String>,
     worldgen_profile: WorldGenProfile,
     catalog: GodotCatalogBridge,
@@ -1108,6 +1111,7 @@ impl IRefCounted for NeptuneSim {
             configured: false,
             map_min: TilePos::new(0, 0),
             map_max: TilePos::new(0, 0),
+            generated_chunks: BTreeSet::new(),
             selected_recipes: BTreeMap::new(),
             worldgen_profile: default_profile(),
             catalog,
@@ -1162,6 +1166,7 @@ impl NeptuneSim {
         self.catalog = ui_catalog;
         self.map_min = TilePos::new(0, 0);
         self.map_max = TilePos::new(0, 0);
+        self.generated_chunks.clear();
         self.selected_recipes.clear();
         self.configured = true;
         true
@@ -1258,13 +1263,93 @@ impl NeptuneSim {
         if !self.ensure_configured("generate_starting_map") {
             return;
         }
-        let generator = WorldGenerator::new(DEFAULT_WORLD_SEED, self.worldgen_profile.clone());
-        let generated = generator.generate_square_around_spawn(radius);
-        self.map_min = generated.min;
-        self.map_max = generated.max;
-        if let Err(error) = self.world.apply_generated_region(&generated) {
-            godot_error!("failed to apply generated world region: {error}");
+        let radius = radius.max(1);
+        self.ensure_generated_rect(-radius, -radius, radius, radius);
+    }
+
+    #[func]
+    pub fn chunk_size(&self) -> i32 {
+        CHUNK_SIZE
+    }
+
+    #[func]
+    pub fn ensure_generated_rect(
+        &mut self,
+        min_x: i32,
+        min_y: i32,
+        max_x: i32,
+        max_y: i32,
+    ) -> VarArray {
+        if !self.ensure_configured("ensure_generated_rect") {
+            return VarArray::new();
         }
+
+        let min = TilePos::new(min_x.min(max_x), min_y.min(max_y));
+        let max = TilePos::new(min_x.max(max_x), min_y.max(max_y));
+        let min_chunk = min.chunk_pos();
+        let max_chunk = max.chunk_pos();
+        let mut generated_chunks = VarArray::new();
+
+        for chunk_y in min_chunk.y..=max_chunk.y {
+            for chunk_x in min_chunk.x..=max_chunk.x {
+                let chunk = ChunkPos::new(chunk_x, chunk_y);
+                if !self.generated_chunks.insert(chunk) {
+                    continue;
+                }
+                if let Err(error) = self.generate_chunk(chunk) {
+                    self.generated_chunks.remove(&chunk);
+                    godot_error!("failed to generate world chunk ({chunk_x}, {chunk_y}): {error}");
+                    continue;
+                }
+                self.include_chunk_in_map_bounds(chunk);
+
+                let mut chunk_row = VarDictionary::new();
+                chunk_row.set("x", chunk_x);
+                chunk_row.set("y", chunk_y);
+                generated_chunks.push(&chunk_row);
+            }
+        }
+
+        generated_chunks
+    }
+
+    #[func]
+    pub fn chunk_tiles(&mut self, chunk_x: i32, chunk_y: i32) -> VarArray {
+        self.chunk_tiles_with_margin(chunk_x, chunk_y, 0)
+    }
+
+    #[func]
+    pub fn chunk_tiles_with_margin(&mut self, chunk_x: i32, chunk_y: i32, margin: i32) -> VarArray {
+        if !self.ensure_configured("chunk_tiles_with_margin") {
+            return VarArray::new();
+        }
+
+        let chunk = ChunkPos::new(chunk_x, chunk_y);
+        if !self.generated_chunks.contains(&chunk) {
+            self.ensure_generated_rect(
+                chunk_min_tile(chunk).x,
+                chunk_min_tile(chunk).y,
+                chunk_max_tile(chunk).x,
+                chunk_max_tile(chunk).y,
+            );
+        }
+
+        let margin = margin.max(0);
+        let core_min = chunk_min_tile(chunk);
+        let core_max = chunk_max_tile(chunk);
+        let min = TilePos::new(core_min.x - margin, core_min.y - margin);
+        let max = TilePos::new(core_max.x + margin, core_max.y + margin);
+
+        let generator = WorldGenerator::new(DEFAULT_WORLD_SEED, self.worldgen_profile.clone());
+        let generated = generator.generate_rect(min, max);
+        let resources = self
+            .world
+            .resource_tiles_in_rect(core_min, core_max)
+            .into_iter()
+            .map(|(pos, item, amount)| (pos, (item, amount)))
+            .collect::<BTreeMap<_, _>>();
+
+        generated_tiles_to_var_array(&generated.terrain_tiles, resources, core_min, core_max)
     }
 
     #[func]
@@ -1286,28 +1371,19 @@ impl NeptuneSim {
         if !self.ensure_configured("map_tiles") {
             return VarArray::new();
         }
-        let mut resources = self
+        let resources = self
             .world
             .resource_tiles_in_rect(self.map_min, self.map_max)
             .into_iter()
             .map(|(pos, item, amount)| (pos, (item, amount)))
             .collect::<std::collections::BTreeMap<_, _>>();
-        let mut tiles = VarArray::new();
-        for (pos, terrain) in self.world.terrain_tiles_in_rect(self.map_min, self.map_max) {
-            let mut tile = VarDictionary::new();
-            tile.set("x", pos.x);
-            tile.set("y", pos.y);
-            tile.set("terrain", terrain);
-            if let Some((resource, amount)) = resources.remove(&pos) {
-                tile.set("resource", resource);
-                tile.set("amount", amount as i64);
-            } else {
-                tile.set("resource", "");
-                tile.set("amount", 0_i64);
-            }
-            tiles.push(&tile);
-        }
-        tiles
+        let terrain_tiles = self
+            .world
+            .terrain_tiles_in_rect(self.map_min, self.map_max)
+            .into_iter()
+            .map(|(pos, terrain_id)| sim_core::worldgen::GeneratedTerrainTile { pos, terrain_id })
+            .collect::<Vec<_>>();
+        generated_tiles_to_var_array(&terrain_tiles, resources, self.map_min, self.map_max)
     }
 
     #[func]
@@ -1455,7 +1531,27 @@ impl NeptuneSim {
         self.world = SimWorld::with_catalog(self.world.catalog().clone());
         self.map_min = TilePos::new(0, 0);
         self.map_max = TilePos::new(0, 0);
+        self.generated_chunks.clear();
         self.selected_recipes.clear();
+    }
+
+    fn generate_chunk(&mut self, chunk: ChunkPos) -> Result<(), String> {
+        let generator = WorldGenerator::new(DEFAULT_WORLD_SEED, self.worldgen_profile.clone());
+        let generated = generator.generate_rect(chunk_min_tile(chunk), chunk_max_tile(chunk));
+        self.world.apply_generated_region(&generated)
+    }
+
+    fn include_chunk_in_map_bounds(&mut self, chunk: ChunkPos) {
+        let min = chunk_min_tile(chunk);
+        let max = chunk_max_tile(chunk);
+        if self.generated_chunks.len() == 1 {
+            self.map_min = min;
+            self.map_max = max;
+            return;
+        }
+
+        self.map_min = TilePos::new(self.map_min.x.min(min.x), self.map_min.y.min(min.y));
+        self.map_max = TilePos::new(self.map_max.x.max(max.x), self.map_max.y.max(max.y));
     }
 
     fn ensure_configured(&self, method: &str) -> bool {
@@ -1466,6 +1562,52 @@ impl NeptuneSim {
             false
         }
     }
+}
+
+fn chunk_min_tile(chunk: ChunkPos) -> TilePos {
+    TilePos::new(chunk.x * CHUNK_SIZE, chunk.y * CHUNK_SIZE)
+}
+
+fn chunk_max_tile(chunk: ChunkPos) -> TilePos {
+    TilePos::new(
+        chunk.x * CHUNK_SIZE + CHUNK_SIZE - 1,
+        chunk.y * CHUNK_SIZE + CHUNK_SIZE - 1,
+    )
+}
+
+fn generated_tiles_to_var_array(
+    terrain_tiles: &[sim_core::worldgen::GeneratedTerrainTile],
+    resources: BTreeMap<TilePos, (String, u32)>,
+    core_min: TilePos,
+    core_max: TilePos,
+) -> VarArray {
+    let mut tiles = VarArray::new();
+    for tile_data in terrain_tiles {
+        let pos = tile_data.pos;
+        let in_core = pos.x >= core_min.x
+            && pos.x <= core_max.x
+            && pos.y >= core_min.y
+            && pos.y <= core_max.y;
+        let mut tile = VarDictionary::new();
+        tile.set("x", pos.x);
+        tile.set("y", pos.y);
+        tile.set("terrain", tile_data.terrain_id.clone());
+        tile.set("render", in_core);
+        if in_core {
+            if let Some((resource, amount)) = resources.get(&pos) {
+                tile.set("resource", resource.clone());
+                tile.set("amount", *amount as i64);
+            } else {
+                tile.set("resource", "");
+                tile.set("amount", 0_i64);
+            }
+        } else {
+            tile.set("resource", "");
+            tile.set("amount", 0_i64);
+        }
+        tiles.push(&tile);
+    }
+    tiles
 }
 
 fn can_place_building_for_godot(
@@ -2400,6 +2542,17 @@ mod tests {
 
     fn catalog_bridge(world: &SimWorld) -> GodotCatalogBridge {
         GodotCatalogBridge::from_core_catalog(world.catalog())
+    }
+
+    #[test]
+    fn chunk_tile_bounds_use_core_chunk_size_for_negative_chunks() {
+        assert_eq!(chunk_min_tile(ChunkPos::new(0, 0)), TilePos::new(0, 0));
+        assert_eq!(chunk_max_tile(ChunkPos::new(0, 0)), TilePos::new(31, 31));
+        assert_eq!(
+            chunk_min_tile(ChunkPos::new(-1, -2)),
+            TilePos::new(-32, -64)
+        );
+        assert_eq!(chunk_max_tile(ChunkPos::new(-1, -2)), TilePos::new(-1, -33));
     }
 
     #[test]
