@@ -1,96 +1,6 @@
 extends RefCounted
 class_name BuildingCatalog
 
-const CATALOG_PATH := "res://assets/catalog/buildings.json"
-const FALLBACK_DEFINITIONS := {
-	"basic_miner": {
-		"display_name": "Miner",
-		"ui_type": "Machine",
-		"state_label": "machine",
-		"model": "res://assets/models/buildings/basic_mining_drill.blend",
-		"color": "#617A5C",
-		"walkable": false,
-	},
-	"wooden_chest": {
-		"display_name": "Chest",
-		"ui_type": "Container",
-		"state_label": "idle",
-		"model": "",
-		"color": "#7A512E",
-		"walkable": false,
-	},
-	"basic_belt": {
-		"display_name": "Belt",
-		"ui_type": "Transport",
-		"state_label": "transport",
-		"model": "res://game/buildings/models/conveyor_belt_straight.tscn",
-		"model_corner": "res://game/buildings/models/conveyor_belt_corner.tscn",
-		"model_corner_mirror": "res://game/buildings/models/conveyor_belt_corner_mirror.tscn",
-		"color": "#2E383A",
-		"walkable": true,
-	},
-	"stone_furnace": {
-		"display_name": "Stone Furnace",
-		"ui_type": "Machine",
-		"state_label": "machine",
-		"model": "res://assets/models/buildings/stone_industrial_furnace.blend",
-		"color": "#6B665C",
-		"walkable": false,
-	},
-	"basic_inserter": {
-		"display_name": "Inserter",
-		"ui_type": "Inserter",
-		"state_label": "inserter",
-		"model": "res://assets/models/buildings/industrial_robot_arm.blend",
-		"color": "#8A7538",
-		"walkable": false,
-	},
-	"basic_assembler": {
-		"display_name": "Assembler",
-		"ui_type": "Machine",
-		"state_label": "machine",
-		"model": "",
-		"color": "#475C75",
-		"walkable": false,
-	},
-	"accelerated_belt": {
-		"display_name": "Accelerated Belt",
-		"ui_type": "Transport",
-		"state_label": "transport",
-		"model": "res://game/buildings/models/conveyor_belt_straight.tscn",
-		"model_corner": "res://game/buildings/models/conveyor_belt_corner.tscn",
-		"model_corner_mirror": "res://game/buildings/models/conveyor_belt_corner_mirror.tscn",
-		"color": "#3D4C57",
-		"walkable": true,
-	},
-	"fast_belt": {
-		"display_name": "Fast Belt",
-		"ui_type": "Transport",
-		"state_label": "transport",
-		"model": "res://game/buildings/models/conveyor_belt_straight.tscn",
-		"model_corner": "res://game/buildings/models/conveyor_belt_corner.tscn",
-		"model_corner_mirror": "res://game/buildings/models/conveyor_belt_corner_mirror.tscn",
-		"color": "#2E475C",
-		"walkable": true,
-	},
-	"basic_splitter": {
-		"display_name": "Splitter",
-		"ui_type": "Transport",
-		"state_label": "transport",
-		"model": "res://assets/models/logistics/conveyor_splitter.blend",
-		"color": "#3D3D4C",
-		"walkable": true,
-	},
-	"basic_underground_belt": {
-		"display_name": "Underground Belt",
-		"ui_type": "Transport",
-		"state_label": "transport",
-		"model": "",
-		"color": "#2E2E38",
-		"walkable": true,
-	},
-}
-
 static var _loaded := false
 static var _definitions: Dictionary = {}
 
@@ -150,33 +60,23 @@ static func reload() -> void:
 	_ensure_loaded()
 
 
+static func load_from_rows(rows: Array) -> void:
+	_definitions.clear()
+	_merge_rows(rows)
+	_loaded = true
+
+
 static func _ensure_loaded() -> void:
 	if _loaded:
 		return
 
-	_definitions = FALLBACK_DEFINITIONS.duplicate(true)
-	for key: Variant in _definitions.keys():
-		_definitions[key]["id"] = str(key)
+	push_error("BuildingCatalog used before load_from_rows()")
+	_definitions.clear()
+	_loaded = true
 
-	var file := FileAccess.open(CATALOG_PATH, FileAccess.READ)
-	if file == null:
-		push_warning("Building catalog manifest not found at %s; using fallback definitions" % CATALOG_PATH)
-		_loaded = true
-		return
 
-	var parsed: Variant = JSON.parse_string(file.get_as_text())
-	if not parsed is Dictionary:
-		push_warning("Building catalog manifest is not a JSON object at %s" % CATALOG_PATH)
-		_loaded = true
-		return
-
-	var buildings: Variant = parsed.get("buildings", [])
-	if not buildings is Array:
-		push_warning("Building catalog manifest has no buildings array at %s" % CATALOG_PATH)
-		_loaded = true
-		return
-
-	for raw_entry: Variant in buildings:
+static func _merge_rows(rows: Array) -> void:
+	for raw_entry: Variant in rows:
 		if not raw_entry is Dictionary:
 			continue
 		var entry: Dictionary = raw_entry
@@ -191,8 +91,6 @@ static func _ensure_loaded() -> void:
 			merged[key] = entry[key]
 		merged["id"] = id
 		_definitions[id] = merged
-
-	_loaded = true
 
 
 static func _default_state_label(def_id: String) -> String:

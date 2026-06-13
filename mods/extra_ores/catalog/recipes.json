@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "recipes": [
+    {
+      "id": "tin_plate",
+      "label": "Tin plate",
+      "machines": ["tin_furnace"],
+      "kind": {
+        "type": "Processing"
+      },
+      "duration_secs": 2.0,
+      "duration_ticks": 120,
+      "inputs": [
+        {"kind": "tin_ore", "amount": 1}
+      ],
+      "outputs": [
+        {"kind": "tin_plate", "amount": 1}
+      ],
+      "energy": {
+        "required_per_second": 1.0,
+        "min_temperature": 650.0
+      }
+    }
+  ]
+}

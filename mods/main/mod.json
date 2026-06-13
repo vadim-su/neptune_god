@@ -1,0 +1,17 @@
+{
+  "id": "main",
+  "name": "Neptune Main",
+  "version": "0.1.0",
+  "api_version": 1,
+  "entry_scene": "res://game/main/main.tscn",
+  "catalogs": {
+    "items": ["res://assets/catalog/items.json"],
+    "buildings": ["res://assets/catalog/buildings.json"],
+    "recipes": ["res://assets/catalog/recipes.json"],
+    "terrain": ["res://assets/catalog/terrain.json"],
+    "resources": ["res://assets/catalog/resources.json"],
+    "worldgen": ["res://assets/catalog/worldgen.json"],
+    "player": ["res://assets/catalog/player.json"]
+  },
+  "dependencies": []
+}

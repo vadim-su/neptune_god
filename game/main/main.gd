@@ -2,6 +2,7 @@ extends Node3D
 
 const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd")
 const ItemCatalogScript := preload("res://game/items/item_catalog.gd")
+const RecipeCatalogScript := preload("res://game/recipes/recipe_catalog.gd")
 const BuildingRendererScript := preload("res://game/buildings/building_renderer.gd")
 const SelectionOutlineScript := preload("res://game/buildings/selection_outline.gd")
 const MachineWindowScene := preload("res://game/ui/machine_window.tscn")
@@ -51,6 +52,17 @@ var dev_console: Node
 
 func _ready() -> void:
 	sim = NeptuneSim.new()
+	if not sim.configure_catalogs(
+		ItemCatalogScript.definitions(),
+		RecipeCatalogScript.definitions(),
+		BuildingCatalogScript.definitions(),
+		_catalog_rows("terrain"),
+		_catalog_rows("player"),
+		_catalog_rows("resources"),
+		_catalog_rows("worldgen")
+	):
+		push_error("Failed to configure simulation catalogs")
+		return
 	sim.generate_starting_map(MAP_RADIUS)
 	player.can_move_to = Callable(self, "_is_player_position_walkable")
 	environment.build_from_sim(sim)
@@ -81,6 +93,20 @@ func _ready() -> void:
 	sim.tick_many(3)
 	_update_status_label()
 	_update_camera()
+
+
+func _catalog_rows(catalog_kind: String) -> Array:
+	var root := get_tree().root
+	if root.has_meta("catalog_registry"):
+		var catalog_registry: Variant = root.get_meta("catalog_registry")
+		if catalog_registry != null and catalog_registry.has_method("rows"):
+			var rows: Array = catalog_registry.rows(catalog_kind)
+			if rows.is_empty():
+				push_error("Catalog registry has no rows for '%s'" % catalog_kind)
+			return rows
+
+	push_error("Catalog registry is not available for '%s'" % catalog_kind)
+	return []
 
 
 func _process(_delta: float) -> void:

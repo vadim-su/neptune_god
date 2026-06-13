@@ -1,0 +1,14 @@
+{
+  "id": "extra_ores",
+  "name": "Extra Ores",
+  "version": "0.1.0",
+  "api_version": 1,
+  "catalogs": {
+    "items": ["res://mods/extra_ores/catalog/items.json"],
+    "buildings": ["res://mods/extra_ores/catalog/buildings.json"],
+    "recipes": ["res://mods/extra_ores/catalog/recipes.json"],
+    "resources": ["res://mods/extra_ores/catalog/resources.json"],
+    "worldgen": ["res://mods/extra_ores/catalog/worldgen.json"]
+  },
+  "dependencies": ["main"]
+}

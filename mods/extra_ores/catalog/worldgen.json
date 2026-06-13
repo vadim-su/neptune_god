@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "profiles": [
+    {
+      "id": "default",
+      "resources": [
+        {
+          "resource": "tin_ore_patch",
+          "allowed_terrains": ["ground"],
+          "patch_frequency": {
+            "base": 16,
+            "distance_curve": {
+              "start_distance": 64,
+              "end_distance": 512,
+              "multiplier_at_end": 2.8
+            }
+          },
+          "patch_radius": {
+            "near": {"min": 2, "max": 4},
+            "far": {"min": 5, "max": 9}
+          },
+          "richness": {
+            "near": {"min": 2500, "max": 6000},
+            "far": {"min": 16000, "max": 50000}
+          }
+        }
+      ],
+      "starting_resources": [
+        {
+          "resource": "tin_ore_patch",
+          "patch_count": 1,
+          "distance_range": {"min": 18, "max": 34},
+          "radius_range": {"min": 3, "max": 5},
+          "amount_range": {"min": 5000, "max": 10000},
+          "allowed_terrains": ["ground"]
+        }
+      ]
+    }
+  ]
+}

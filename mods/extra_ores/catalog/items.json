@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "items": [
+    {
+      "id": "tin_ore",
+      "name": "Tin ore",
+      "display_name": "Tin ore",
+      "image": "",
+      "model": "res://assets/models/resources/pile_of_ore.blend",
+      "color": "#8A8F91",
+      "max_stack": 100,
+      "weight_grams": 500,
+      "bulk_units": 3,
+      "size_class": "Small",
+      "tags": ["ore", "raw_resource"]
+    },
+    {
+      "id": "tin_plate",
+      "name": "Tin plate",
+      "display_name": "Tin plate",
+      "image": "",
+      "model": "res://assets/models/items/iron_sheet.blend",
+      "color": "#B4BCBF",
+      "max_stack": 100,
+      "weight_grams": 1000,
+      "bulk_units": 2,
+      "size_class": "Small",
+      "tags": ["component", "small_part"]
+    }
+  ]
+}

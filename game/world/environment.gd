@@ -172,7 +172,10 @@ func _resource_material(resource_id: String) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.roughness = 0.86
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	var texture: Texture2D = load(RESOURCE_TEXTURES.get(resource_id, ""))
+	var texture: Texture2D
+	var texture_path: String = RESOURCE_TEXTURES.get(resource_id, "")
+	if not texture_path.is_empty():
+		texture = load(texture_path)
 	if texture != null:
 		material.albedo_color = Color.WHITE
 		material.albedo_texture = texture

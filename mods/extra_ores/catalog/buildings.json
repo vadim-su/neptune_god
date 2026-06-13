@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "buildings": [
+    {
+      "id": "tin_furnace",
+      "display_name": "Tin Furnace",
+      "ui_type": "Machine",
+      "state_label": "machine",
+      "model": "res://assets/models/buildings/stone_industrial_furnace.blend",
+      "color": "#697477",
+      "walkable": false,
+      "sim": {
+        "kind": "Machine",
+        "footprint": {"rectangle": [2, 2]},
+        "rotate_footprint": false,
+        "outputs": [
+          {"role": "Output", "side": "OutputDirection", "offsets": [0, 1], "accepts": ["tin_plate"]}
+        ],
+        "inventories": [
+          {"role": "Input", "slots": 1, "max_stack": 100, "accepts": ["tin_ore"]},
+          {"role": "Output", "slots": 1, "max_stack": 100, "accepts": ["tin_plate"]},
+          {"role": "Fuel", "slots": 1, "max_stack": 100, "accepts": ["coal", "wood"]}
+        ],
+        "behavior": {
+          "driver": "behavior_host",
+          "behavior_id": "test:behavior",
+          "role": "processor"
+        },
+        "power": {"type": "none"}
+      }
+    }
+  ]
+}

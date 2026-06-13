@@ -1,0 +1,7 @@
+{
+  "id": "extra_ores",
+  "name": "Extra Ores",
+  "version": "0.1.0",
+  "api_version": 1,
+  "dependencies": ["main"]
+}

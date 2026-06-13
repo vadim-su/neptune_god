@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "resources": [
+    {
+      "id": "tin_ore_patch",
+      "item": "tin_ore",
+      "world_image": "",
+      "generation": {
+        "frequency_range": {"min": 18, "max": 42},
+        "radius_range": {"min": 2, "max": 5},
+        "amount_range": {"min": 3000, "max": 10000}
+      }
+    }
+  ]
+}
