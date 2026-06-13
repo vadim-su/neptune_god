@@ -1,0 +1,45 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="PackedScene" path="res://game/buildings/models/conveyor_belt_straight.tscn" id="1_straight"]
+[ext_resource type="PackedScene" path="res://game/buildings/models/conveyor_belt_corner.tscn" id="2_corner"]
+[ext_resource type="PackedScene" path="res://game/buildings/models/conveyor_belt_corner_mirror.tscn" id="3_corner_mirror"]
+
+[sub_resource type="Environment" id="Environment_preview"]
+background_mode = 1
+background_color = Color(0.0352941, 0.0392157, 0.0392157, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.78, 0.84, 0.8, 1)
+ambient_light_energy = 0.75
+tonemap_mode = 2
+
+[node name="BeltShaderPreview" type="Node3D"]
+
+[node name="Straight" parent="." instance=ExtResource("1_straight")]
+position = Vector3(-1.5, 0, 0)
+preview_speed_tiles_per_second = 1.0
+apply_at_runtime = true
+
+[node name="Corner" parent="." instance=ExtResource("2_corner")]
+preview_speed_tiles_per_second = 2.0
+preview_tint = Color(0.88, 0.96, 1, 1)
+apply_at_runtime = true
+
+[node name="CornerMirror" parent="." instance=ExtResource("3_corner_mirror")]
+position = Vector3(1.5, 0, 0)
+preview_speed_tiles_per_second = 3.0
+preview_tint = Color(0.76, 0.9, 1, 1)
+apply_at_runtime = true
+
+[node name="Camera3D" type="Camera3D" parent="."]
+position = Vector3(0, 3.2, 4.2)
+rotation = Vector3(-0.698132, 0, 0)
+current = true
+fov = 45.0
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.872665, 0.698132, -0.349066)
+light_energy = 2.0
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_preview")

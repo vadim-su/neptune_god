@@ -2,10 +2,13 @@ extends Control
 class_name InventoryWindow
 
 signal closed
+signal slot_transfer_requested(from_ref: Dictionary, to_ref: Dictionary, amount: int)
+signal slot_action_requested(slot_ref: Dictionary, action: String)
 
 const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd")
 const ItemCatalogScript := preload("res://game/items/item_catalog.gd")
 const ItemIconRendererScript := preload("res://game/ui/item_icon_renderer.gd")
+const InventorySlotScript := preload("res://game/ui/inventory_slot.gd")
 
 const PANEL_BG := Color(0.070, 0.075, 0.065, 0.96)
 const PANEL_INNER_BG := Color(0.050, 0.055, 0.050, 0.92)
@@ -38,14 +41,12 @@ const FALLBACK_SECTIONS := [
 
 const OBJECT_ROLE_ORDER := ["Input", "Fuel", "Output", "Storage", "Hand"]
 
-@onready var player_panel: PanelContainer = %PlayerPanel
-@onready var player_close_button: Button = %PlayerCloseButton
+@onready var player_panel = %PlayerPanel
 @onready var status_label: Label = %StatusLabel
 @onready var equipment_list: VBoxContainer = %EquipmentList
 @onready var sections_container: VBoxContainer = %Sections
-@onready var object_panel: PanelContainer = %ObjectPanel
+@onready var object_panel = %ObjectPanel
 @onready var object_title: Label = %ObjectTitle
-@onready var object_close_button: Button = %ObjectCloseButton
 @onready var object_content: VBoxContainer = %ObjectContent
 @onready var cursor_stack: PanelContainer = %CursorStack
 @onready var cursor_icon: TextureRect = %CursorIcon
@@ -60,8 +61,8 @@ func _ready() -> void:
 	player_panel.add_theme_stylebox_override("panel", _stylebox(PANEL_BG, PANEL_BORDER, 1, 0))
 	object_panel.add_theme_stylebox_override("panel", _stylebox(PANEL_BG, PANEL_BORDER, 1, 0))
 	cursor_stack.add_theme_stylebox_override("panel", _stylebox(SLOT_BG, Color(0.95, 0.84, 0.55, 0.95), 1, 0))
-	player_close_button.pressed.connect(hide_window)
-	object_close_button.pressed.connect(hide_window)
+	player_panel.close_requested.connect(hide_window)
+	object_panel.close_requested.connect(hide_window)
 	_item_icon_renderer = ItemIconRendererScript.new()
 	_item_icon_renderer.name = "ItemIconRenderer"
 	add_child(_item_icon_renderer)
@@ -186,9 +187,10 @@ func _add_container_section(section: Dictionary) -> void:
 	grid.add_theme_constant_override("v_separation", SLOT_GAP)
 	grid_panel.add_child(grid)
 
-	for raw_slot: Variant in section.get("slots", []):
-		var slot: Dictionary = raw_slot
-		grid.add_child(_slot_view(slot))
+	var slots: Array = section.get("slots", [])
+	for index in range(slots.size()):
+		var slot: Dictionary = slots[index]
+		grid.add_child(_slot_view(slot, _slot_ref_for_section(section, index)))
 
 
 func _rebuild_object(selected_building: Dictionary, object_snapshot: Dictionary) -> void:
@@ -204,10 +206,10 @@ func _rebuild_object(selected_building: Dictionary, object_snapshot: Dictionary)
 		var slots := _slots_for_role(role, inventories)
 		if slots.is_empty():
 			continue
-		_add_object_role_section(role, slots)
+		_add_object_role_section(int(selected_building.get("id", -1)), role, slots)
 
 
-func _add_object_role_section(role: String, slots: Array) -> void:
+func _add_object_role_section(building_id: int, role: String, slots: Array) -> void:
 	var section_box := VBoxContainer.new()
 	section_box.add_theme_constant_override("separation", 4)
 	object_content.add_child(section_box)
@@ -228,25 +230,37 @@ func _add_object_role_section(role: String, slots: Array) -> void:
 	grid.add_theme_constant_override("v_separation", SLOT_GAP)
 	grid_panel.add_child(grid)
 
-	for raw_slot: Variant in slots:
-		var slot: Dictionary = raw_slot
-		grid.add_child(_slot_view(slot))
+	for index in range(slots.size()):
+		var slot: Dictionary = slots[index]
+		grid.add_child(_slot_view(slot, {
+			"kind": "building",
+			"building_id": building_id,
+			"role": role,
+			"slot": index,
+		}))
 
 
-func _slot_view(slot: Dictionary) -> Control:
-	var panel_slot := PanelContainer.new()
+func _slot_view(slot: Dictionary, slot_ref: Dictionary = {}) -> Control:
+	var panel_slot: PanelContainer = InventorySlotScript.new()
 	panel_slot.custom_minimum_size = SLOT_SIZE
 	panel_slot.add_theme_stylebox_override("panel", _stylebox(SLOT_BG, SLOT_BORDER, 1, 0))
 
 	var item := str(slot.get("item", ""))
 	var amount := int(slot.get("amount", 0))
+	var texture: Texture2D = null
 	var icon := _item_icon(item, Vector2(32.0, 32.0))
+	texture = icon.texture
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	icon.offset_left = 3.0
 	icon.offset_top = 3.0
 	icon.offset_right = -3.0
 	icon.offset_bottom = -3.0
 	panel_slot.add_child(icon)
+	if panel_slot is InventorySlot:
+		var inventory_slot := panel_slot as InventorySlot
+		inventory_slot.configure(slot_ref, item, amount, texture)
+		inventory_slot.transfer_requested.connect(_on_slot_transfer_requested)
+		inventory_slot.action_requested.connect(_on_slot_action_requested)
 
 	if amount > 1:
 		var amount_label := Label.new()
@@ -262,6 +276,14 @@ func _slot_view(slot: Dictionary) -> Control:
 		panel_slot.add_child(amount_label)
 
 	return panel_slot
+
+
+func _on_slot_transfer_requested(from_ref: Dictionary, to_ref: Dictionary, amount: int) -> void:
+	slot_transfer_requested.emit(from_ref, to_ref, amount)
+
+
+func _on_slot_action_requested(slot_ref: Dictionary, action: String) -> void:
+	slot_action_requested.emit(slot_ref, action)
 
 
 func _item_icon(item: String, minimum_size: Vector2) -> TextureRect:
@@ -329,6 +351,8 @@ func _section_from_player_slots(section_def: Dictionary, player_slots: Array, of
 	return {
 		"id": str(section_def.get("id", "")),
 		"name": str(section_def.get("name", "Inventory")),
+		"source_kind": "player",
+		"source_offset": offset,
 		"slots": slots,
 		"used_slots": used_slots,
 		"total_slots": slot_count,
@@ -336,6 +360,19 @@ func _section_from_player_slots(section_def: Dictionary, player_slots: Array, of
 		"max_weight_grams": 0,
 		"total_bulk_units": 0,
 		"max_bulk_units": 0,
+	}
+
+
+func _slot_ref_for_section(section: Dictionary, slot_index: int) -> Dictionary:
+	if str(section.get("source_kind", "")) == "player":
+		return {
+			"kind": "player",
+			"slot": int(section.get("source_offset", 0)) + slot_index,
+		}
+	return {
+		"kind": "character",
+		"container": str(section.get("id", "")),
+		"slot": slot_index,
 	}
 
 

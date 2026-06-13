@@ -1,6 +1,7 @@
-[gd_scene format=3 uid="uid://b80jo7rwxacxs"]
+[gd_scene load_steps=5 format=3 uid="uid://b80jo7rwxacxs"]
 
 [ext_resource type="Script" path="res://game/ui/inventory_window.gd" id="1_inventory_window"]
+[ext_resource type="Script" path="res://game/ui/game_window.gd" id="2_game_window"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
 bg_color = Color(0.07, 0.075, 0.065, 0.96)
@@ -38,6 +39,11 @@ offset_right = 750.0
 offset_bottom = 692.0
 mouse_filter = 0
 theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+script = ExtResource("2_game_window")
+draggable = true
+header_path = NodePath("PlayerMargin/PlayerColumn/PlayerHeader")
+close_button_path = NodePath("PlayerMargin/PlayerColumn/PlayerHeader/PlayerCloseButton")
+title_label_path = NodePath("PlayerMargin/PlayerColumn/PlayerHeader/PlayerTitle")
 
 [node name="PlayerMargin" type="MarginContainer" parent="PlayerPanel"]
 layout_mode = 2
@@ -109,6 +115,11 @@ offset_right = 1034.0
 offset_bottom = 692.0
 mouse_filter = 0
 theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+script = ExtResource("2_game_window")
+draggable = true
+header_path = NodePath("ObjectMargin/ObjectColumn/ObjectHeader")
+close_button_path = NodePath("ObjectMargin/ObjectColumn/ObjectHeader/ObjectCloseButton")
+title_label_path = NodePath("ObjectMargin/ObjectColumn/ObjectHeader/ObjectTitle")
 
 [node name="ObjectMargin" type="MarginContainer" parent="ObjectPanel"]
 layout_mode = 2

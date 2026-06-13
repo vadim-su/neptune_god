@@ -22,9 +22,8 @@ const CARD_SIZE := Vector2(204.0, 54.0)
 
 enum GroupingMode { CATEGORY, USAGE, NAME }
 
-@onready var panel: PanelContainer = %Panel
+@onready var panel = %Panel
 @onready var window_title: Label = %WindowTitle
-@onready var close_button: Button = %CloseButton
 @onready var search_field: LineEdit = %SearchField
 @onready var category_button: Button = %CategoryButton
 @onready var usage_button: Button = %UsageButton
@@ -42,7 +41,7 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	anchors_preset = Control.PRESET_FULL_RECT
 	panel.add_theme_stylebox_override("panel", _stylebox(PANEL_BG, PANEL_BORDER, 1, 0))
-	close_button.pressed.connect(close_selector)
+	panel.close_requested.connect(close_selector)
 	search_field.text_changed.connect(_on_search_changed)
 	category_button.pressed.connect(_set_grouping_mode.bind(GroupingMode.CATEGORY))
 	usage_button.pressed.connect(_set_grouping_mode.bind(GroupingMode.USAGE))

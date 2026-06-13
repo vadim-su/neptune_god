@@ -1,227 +1,227 @@
 {
   "schema": 1,
   "items": [
-    {
-      "id": "iron_ore",
-      "name": "Iron ore",
-      "display_name": "Iron ore",
-      "image": "res://assets/images/resource_iron_ore.png",
-      "model": "res://assets/models/resources/iron_ore.blend",
-      "color": "#94785C",
-      "max_stack": 100,
-      "weight_grams": 500,
-      "bulk_units": 3,
-      "size_class": "Small",
-      "tags": ["ore", "raw_resource"]
-    },
-    {
-      "id": "copper_ore",
-      "name": "Copper ore",
-      "display_name": "Copper ore",
-      "image": "res://assets/images/resource_copper_ore.png",
-      "model": "res://assets/models/resources/copper_ore.blend",
-      "color": "#9E5C38",
-      "max_stack": 100,
-      "weight_grams": 500,
-      "bulk_units": 3,
-      "size_class": "Small",
-      "tags": ["ore", "raw_resource"]
-    },
-    {
-      "id": "coal",
-      "name": "Coal",
-      "display_name": "Coal",
-      "image": "res://assets/images/resource_coal.png",
-      "model": "res://assets/models/resources/pile_of_ore.blend",
-      "color": "#0F0F0F",
-      "max_stack": 100,
-      "weight_grams": 500,
-      "bulk_units": 3,
-      "size_class": "Small",
-      "tags": ["ore", "raw_resource"],
-      "fuel": {
-        "category": "Solid",
-        "energy": 8.0,
-        "burn_temperature": 900.0
-      }
-    },
-    {
-      "id": "wood",
-      "name": "Wood",
-      "display_name": "Wood",
-      "image": "res://assets/images/ground_tile.png",
-      "model": "res://assets/models/resources/wood.blend",
-      "color": "#704D29",
-      "max_stack": 100,
-      "weight_grams": 500,
-      "bulk_units": 4,
-      "size_class": "Medium",
-      "tags": ["raw_resource"],
-      "fuel": {
-        "category": "Solid",
-        "energy": 4.0,
-        "burn_temperature": 600.0
-      }
-    },
-    {
-      "id": "iron_plate",
-      "name": "Iron plate",
-      "display_name": "Iron plate",
-      "image": "",
-      "model": "res://assets/models/items/iron_sheet.blend",
-      "color": "#A3A394",
-      "max_stack": 100,
-      "weight_grams": 1000,
-      "bulk_units": 2,
-      "size_class": "Small",
-      "tags": ["component", "small_part"]
-    },
-    {
-      "id": "copper_plate",
-      "name": "Copper plate",
-      "display_name": "Copper plate",
-      "image": "",
-      "model": "res://assets/models/items/iron_sheet.blend",
-      "color": "#C76B33",
-      "max_stack": 100,
-      "weight_grams": 1000,
-      "bulk_units": 2,
-      "size_class": "Small",
-      "tags": ["component", "small_part"]
-    },
-    {
-      "id": "iron_gear",
-      "name": "Iron gear",
-      "display_name": "Iron gear",
-      "image": "",
-      "model": "res://assets/models/items/steel_beams.blend",
-      "color": "#8F8F80",
-      "max_stack": 100,
-      "weight_grams": 1000,
-      "bulk_units": 2,
-      "size_class": "Small",
-      "tags": ["component", "small_part"]
-    },
-    {
-      "id": "copper_cable",
-      "name": "Copper cable",
-      "display_name": "Copper cable",
-      "image": "",
-      "model": "",
-      "color": "#BD5C29",
-      "max_stack": 200,
-      "weight_grams": 1000,
-      "bulk_units": 2,
-      "size_class": "Small",
-      "tags": ["component", "small_part"]
-    },
-    {
-      "id": "iron_stick",
-      "name": "Iron stick",
-      "display_name": "Iron stick",
-      "image": "",
-      "model": "res://assets/models/items/steel_beams.blend",
-      "color": "#85857A",
-      "max_stack": 100,
-      "weight_grams": 1000,
-      "bulk_units": 2,
-      "size_class": "Small",
-      "tags": ["component", "small_part"]
-    },
-    {
-      "id": "work_pants",
-      "name": "Work pants",
-      "display_name": "Work pants",
-      "image": "",
-      "model": "",
-      "color": "#595C57",
-      "max_stack": 1,
-      "weight_grams": 900,
-      "bulk_units": 10,
-      "size_class": "Medium",
-      "tags": ["equipment", "clothing"],
-      "equipment": {
-        "slot": "legs",
-        "provides_containers": [
-          {
-            "id": "left_pocket",
-            "name": "Left pocket",
-            "slots": 4,
-            "max_weight_grams": 4000,
-            "max_bulk_units": 10,
-            "max_item_size": "Small",
-            "pickup_priority": 30,
-            "quick_access": true
-          },
-          {
-            "id": "right_pocket",
-            "name": "Right pocket",
-            "slots": 4,
-            "max_weight_grams": 4000,
-            "max_bulk_units": 10,
-            "max_item_size": "Small",
-            "pickup_priority": 29,
-            "quick_access": true
-          }
-        ]
-      }
-    },
-    {
-      "id": "tool_belt",
-      "name": "Tool belt",
-      "display_name": "Tool belt",
-      "image": "",
-      "model": "",
-      "color": "#9E6B38",
-      "max_stack": 1,
-      "weight_grams": 800,
-      "bulk_units": 8,
-      "size_class": "Medium",
-      "tags": ["equipment", "belt"],
-      "equipment": {
-        "slot": "waist",
-        "provides_containers": [
-          {
-            "id": "tool_belt",
-            "name": "Tool belt",
-            "slots": 6,
-            "max_weight_grams": 12000,
-            "max_bulk_units": 24,
-            "max_item_size": "Medium",
-            "accepts_tags": ["tool", "small_part"],
-            "pickup_priority": 40,
-            "quick_access": true
-          }
-        ]
-      }
-    },
-    {
-      "id": "small_backpack",
-      "name": "Small backpack",
-      "display_name": "Small backpack",
-      "image": "",
-      "model": "",
-      "color": "#405C47",
-      "max_stack": 1,
-      "weight_grams": 1200,
-      "bulk_units": 16,
-      "size_class": "Large",
-      "tags": ["equipment", "container"],
-      "equipment": {
-        "slot": "back",
-        "provides_containers": [
-          {
-            "id": "backpack_main",
-            "name": "Backpack",
-            "slots": 28,
-            "max_weight_grams": 48000,
-            "max_bulk_units": 160,
-            "max_item_size": "Large",
-            "pickup_priority": 10,
-            "quick_access": false
-          }
-        ]
-      }
-    }
+	{
+	  "id": "iron_ore",
+	  "name": "Iron ore",
+	  "display_name": "Iron ore",
+	  "image": "res://assets/images/resource_iron_ore.png",
+	  "model": "res://assets/models/resources/iron_ore.blend",
+	  "color": "#94785C",
+	  "max_stack": 100,
+	  "weight_grams": 500,
+	  "bulk_units": 3,
+	  "size_class": "Small",
+	  "tags": ["ore", "raw_resource"]
+	},
+	{
+	  "id": "copper_ore",
+	  "name": "Copper ore",
+	  "display_name": "Copper ore",
+	  "image": "res://assets/images/resource_copper_ore.png",
+	  "model": "res://assets/models/resources/copper_ore.blend",
+	  "color": "#9E5C38",
+	  "max_stack": 100,
+	  "weight_grams": 500,
+	  "bulk_units": 3,
+	  "size_class": "Small",
+	  "tags": ["ore", "raw_resource"]
+	},
+	{
+	  "id": "coal",
+	  "name": "Coal",
+	  "display_name": "Coal",
+	  "image": "res://assets/images/resource_coal.png",
+	  "model": "res://assets/models/resources/pile_of_ore.blend",
+	  "color": "#0F0F0F",
+	  "max_stack": 100,
+	  "weight_grams": 500,
+	  "bulk_units": 3,
+	  "size_class": "Small",
+	  "tags": ["ore", "raw_resource"],
+	  "fuel": {
+		"category": "Solid",
+		"energy": 8.0,
+		"burn_temperature": 900.0
+	  }
+	},
+	{
+	  "id": "wood",
+	  "name": "Wood",
+	  "display_name": "Wood",
+	  "image": "res://assets/images/ground_tile.png",
+	  "model": "res://assets/models/resources/wood.blend",
+	  "color": "#704D29",
+	  "max_stack": 100,
+	  "weight_grams": 500,
+	  "bulk_units": 4,
+	  "size_class": "Medium",
+	  "tags": ["raw_resource"],
+	  "fuel": {
+		"category": "Solid",
+		"energy": 4.0,
+		"burn_temperature": 600.0
+	  }
+	},
+	{
+	  "id": "iron_plate",
+	  "name": "Iron plate",
+	  "display_name": "Iron plate",
+	  "image": "",
+	  "model": "res://assets/models/items/iron_sheet.blend",
+	  "color": "#A3A394",
+	  "max_stack": 100,
+	  "weight_grams": 1000,
+	  "bulk_units": 2,
+	  "size_class": "Small",
+	  "tags": ["component", "small_part"]
+	},
+	{
+	  "id": "copper_plate",
+	  "name": "Copper plate",
+	  "display_name": "Copper plate",
+	  "image": "",
+	  "model": "res://assets/models/items/iron_sheet.blend",
+	  "color": "#C76B33",
+	  "max_stack": 100,
+	  "weight_grams": 1000,
+	  "bulk_units": 2,
+	  "size_class": "Small",
+	  "tags": ["component", "small_part"]
+	},
+	{
+	  "id": "iron_gear",
+	  "name": "Iron gear",
+	  "display_name": "Iron gear",
+	  "image": "",
+	  "model": "res://assets/models/items/steel_beams.blend",
+	  "color": "#8F8F80",
+	  "max_stack": 100,
+	  "weight_grams": 1000,
+	  "bulk_units": 2,
+	  "size_class": "Small",
+	  "tags": ["component", "small_part"]
+	},
+	{
+	  "id": "copper_cable",
+	  "name": "Copper cable",
+	  "display_name": "Copper cable",
+	  "image": "",
+	  "model": "",
+	  "color": "#BD5C29",
+	  "max_stack": 200,
+	  "weight_grams": 1000,
+	  "bulk_units": 2,
+	  "size_class": "Small",
+	  "tags": ["component", "small_part"]
+	},
+	{
+	  "id": "iron_stick",
+	  "name": "Iron stick",
+	  "display_name": "Iron stick",
+	  "image": "",
+	  "model": "res://assets/models/items/steel_beams.blend",
+	  "color": "#85857A",
+	  "max_stack": 100,
+	  "weight_grams": 1000,
+	  "bulk_units": 2,
+	  "size_class": "Small",
+	  "tags": ["component", "small_part"]
+	},
+	{
+	  "id": "work_pants",
+	  "name": "Work pants",
+	  "display_name": "Work pants",
+	  "image": "",
+	  "model": "",
+	  "color": "#595C57",
+	  "max_stack": 1,
+	  "weight_grams": 900,
+	  "bulk_units": 10,
+	  "size_class": "Medium",
+	  "tags": ["equipment", "clothing"],
+	  "equipment": {
+		"slot": "legs",
+		"provides_containers": [
+		  {
+			"id": "left_pocket",
+			"name": "Left pocket",
+			"slots": 4,
+			"max_weight_grams": 4000,
+			"max_bulk_units": 10,
+			"max_item_size": "Small",
+			"pickup_priority": 30,
+			"quick_access": true
+		  },
+		  {
+			"id": "right_pocket",
+			"name": "Right pocket",
+			"slots": 4,
+			"max_weight_grams": 4000,
+			"max_bulk_units": 10,
+			"max_item_size": "Small",
+			"pickup_priority": 29,
+			"quick_access": true
+		  }
+		]
+	  }
+	},
+	{
+	  "id": "tool_belt",
+	  "name": "Tool belt",
+	  "display_name": "Tool belt",
+	  "image": "",
+	  "model": "",
+	  "color": "#9E6B38",
+	  "max_stack": 1,
+	  "weight_grams": 800,
+	  "bulk_units": 8,
+	  "size_class": "Medium",
+	  "tags": ["equipment", "belt"],
+	  "equipment": {
+		"slot": "waist",
+		"provides_containers": [
+		  {
+			"id": "tool_belt",
+			"name": "Tool belt",
+			"slots": 6,
+			"max_weight_grams": 12000,
+			"max_bulk_units": 24,
+			"max_item_size": "Medium",
+			"accepts_tags": ["tool", "small_part"],
+			"pickup_priority": 40,
+			"quick_access": true
+		  }
+		]
+	  }
+	},
+	{
+	  "id": "small_backpack",
+	  "name": "Small backpack",
+	  "display_name": "Small backpack",
+	  "image": "",
+	  "model": "",
+	  "color": "#405C47",
+	  "max_stack": 1,
+	  "weight_grams": 1200,
+	  "bulk_units": 16,
+	  "size_class": "Large",
+	  "tags": ["equipment", "container"],
+	  "equipment": {
+		"slot": "back",
+		"provides_containers": [
+		  {
+			"id": "backpack_main",
+			"name": "Backpack",
+			"slots": 28,
+			"max_weight_grams": 48000,
+			"max_bulk_units": 160,
+			"max_item_size": "Large",
+			"pickup_priority": 10,
+			"quick_access": false
+		  }
+		]
+	  }
+	}
   ]
 }

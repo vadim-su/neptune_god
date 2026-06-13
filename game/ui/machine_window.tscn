@@ -35,6 +35,10 @@ offset_bottom = 392.0
 mouse_filter = 0
 theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
 script = ExtResource("1_machine_window")
+draggable = true
+header_path = NodePath("Margin/Column/Header")
+close_button_path = NodePath("Margin/Column/Header/CloseButton")
+title_label_path = NodePath("Margin/Column/Header/WindowTitle")
 
 [node name="Margin" type="MarginContainer" parent="."]
 layout_mode = 2

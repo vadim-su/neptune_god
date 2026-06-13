@@ -1,4 +1,4 @@
-extends PanelContainer
+extends "res://game/ui/game_window.gd"
 class_name MachineWindow
 
 const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd")
@@ -21,37 +21,21 @@ const WINDOW_COMPACT_HEIGHT := 320.0
 const WINDOW_RECIPE_HEIGHT := 430.0
 
 @onready var window_title: Label = %WindowTitle
-@onready var header: Control = %Header
-@onready var close_button: Button = %CloseButton
 @onready var subtitle: Label = %Subtitle
 @onready var content: VBoxContainer = %Content
 
 var selected_building_id := -1
-var _dragging := false
-var _drag_offset := Vector2.ZERO
 var _item_icon_renderer: Node
 
 
 func _ready() -> void:
+	super._ready()
 	add_theme_stylebox_override("panel", _panel_stylebox())
 	_item_icon_renderer = ItemIconRendererScript.new()
 	_item_icon_renderer.name = "ItemIconRenderer"
 	add_child(_item_icon_renderer)
-	header.gui_input.connect(_on_header_gui_input)
-	close_button.pressed.connect(hide_window)
+	close_requested.connect(hide_window)
 	visible = false
-
-
-func _input(event: InputEvent) -> void:
-	if not _dragging:
-		return
-
-	if event is InputEventMouseMotion:
-		global_position = get_viewport().get_mouse_position() - _drag_offset
-		get_viewport().set_input_as_handled()
-	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
-		_dragging = false
-		get_viewport().set_input_as_handled()
 
 
 func update(building: Dictionary, snapshot: Dictionary) -> void:
@@ -72,15 +56,8 @@ func update(building: Dictionary, snapshot: Dictionary) -> void:
 
 func hide_window() -> void:
 	selected_building_id = -1
-	_dragging = false
+	stop_dragging()
 	visible = false
-
-
-func _on_header_gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		_dragging = true
-		_drag_offset = get_viewport().get_mouse_position() - global_position
-		get_viewport().set_input_as_handled()
 
 
 func _rebuild_content(snapshot: Dictionary) -> void:

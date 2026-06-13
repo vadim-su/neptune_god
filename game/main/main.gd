@@ -1,11 +1,13 @@
 extends Node3D
 
 const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd")
+const ItemCatalogScript := preload("res://game/items/item_catalog.gd")
 const BuildingRendererScript := preload("res://game/buildings/building_renderer.gd")
 const SelectionOutlineScript := preload("res://game/buildings/selection_outline.gd")
 const MachineWindowScene := preload("res://game/ui/machine_window.tscn")
 const CatalogSelectorScene := preload("res://game/ui/catalog_selector.tscn")
 const InventoryWindowScene := preload("res://game/ui/inventory_window.tscn")
+const DevConsoleScene := preload("res://game/ui/dev_console.tscn")
 const HOTBAR_SELECTOR_OWNER_PREFIX := "hotbar:"
 
 @onready var camera: Camera3D = %Camera3D
@@ -44,6 +46,7 @@ var selection_outline_root: Node3D
 var machine_window: MachineWindow
 var catalog_selector: Node
 var inventory_window: Node
+var dev_console: Node
 
 
 func _ready() -> void:
@@ -65,6 +68,12 @@ func _ready() -> void:
 	machine_window.recipe_selected.connect(_on_machine_recipe_selected)
 	inventory_window = InventoryWindowScene.instantiate()
 	$Hud.add_child(inventory_window)
+	inventory_window.slot_transfer_requested.connect(_on_inventory_slot_transfer_requested)
+	inventory_window.slot_action_requested.connect(_on_inventory_slot_action_requested)
+	dev_console = DevConsoleScene.instantiate()
+	$Hud.add_child(dev_console)
+	dev_console.command_submitted.connect(_on_dev_console_command_submitted)
+	dev_console.set_completions(_dev_console_completions())
 	catalog_selector = CatalogSelectorScene.instantiate()
 	$Hud.add_child(catalog_selector)
 	catalog_selector.entry_selected.connect(_on_catalog_selector_entry_selected)
@@ -72,7 +81,6 @@ func _ready() -> void:
 	sim.tick_many(3)
 	_update_status_label()
 	_update_camera()
-	print(status_label.text.replace("\n", " | "))
 
 
 func _process(_delta: float) -> void:
@@ -88,6 +96,17 @@ func _physics_process(_delta: float) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F1:
+		dev_console.toggle_console()
+		get_viewport().set_input_as_handled()
+		return
+
+	if dev_console != null and dev_console.is_open():
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+			dev_console.close_console()
+			get_viewport().set_input_as_handled()
+		return
+
 	if catalog_selector != null and catalog_selector.is_open():
 		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 			catalog_selector.close_selector()
@@ -155,7 +174,8 @@ func _is_pointer_over_ui() -> bool:
 
 func _ui_blocks_gameplay_input() -> bool:
 	return (
-		(catalog_selector != null and catalog_selector.is_open())
+		(dev_console != null and dev_console.is_open())
+		or (catalog_selector != null and catalog_selector.is_open())
 		or (inventory_window != null and inventory_window.is_open())
 	)
 
@@ -204,10 +224,74 @@ func _on_catalog_selector_closed(owner_id: String) -> void:
 	hotbar.cancel_assignment(slot_index)
 
 
+func _on_dev_console_command_submitted(line: String) -> void:
+	var parts := line.split(" ", false)
+	if parts.is_empty():
+		return
+
+	match str(parts[0]).to_lower():
+		"help":
+			dev_console.append_lines([
+				"commands: help, clear, status, items, give <item> <amount>",
+				"F1 toggles console. Up/Down navigate history. Tab completes item ids.",
+			])
+		"clear":
+			dev_console.clear_scrollback()
+		"status":
+			dev_console.append_output(
+				"tick=%d digest=%d buildings=%d selected=%s" % [
+					sim.core_tick(),
+					sim.digest(),
+					sim.building_count(),
+					"none" if selected_object.is_empty() else "%s #%d" % [str(selected_object.get("def_id", "")), selected_object_id],
+				]
+			)
+		"items":
+			dev_console.append_output("items: %s" % "  ".join(_item_ids()))
+		"give":
+			_execute_give_command(parts)
+		_:
+			dev_console.append_output("Unknown command '%s'. Use 'help' for commands." % str(parts[0]))
+
+
+func _execute_give_command(parts: PackedStringArray) -> void:
+	if parts.size() < 2:
+		dev_console.append_output("Usage: give <item> <amount>")
+		return
+	var item_id := str(parts[1])
+	var amount := 1
+	if parts.size() >= 3:
+		amount = max(1, int(parts[2]))
+	if sim.give_item(item_id, amount):
+		dev_console.append_output("Added %s x%d" % [item_id, amount])
+		if inventory_window != null and inventory_window.is_open():
+			_update_inventory_window()
+		return
+	dev_console.append_output("Could not add %s x%d" % [item_id, amount])
+
+
+func _dev_console_completions() -> Array:
+	var completions: Array = ["help", "clear", "status", "items", "give"]
+	for item_id: String in _item_ids():
+		completions.append(item_id)
+	return completions
+
+
+func _item_ids() -> Array[String]:
+	var ids: Array[String] = []
+	for raw_definition: Variant in ItemCatalogScript.definitions():
+		var definition: Dictionary = raw_definition
+		var id := str(definition.get("id", ""))
+		if not id.is_empty():
+			ids.append(id)
+	return ids
+
+
 func _toggle_inventory_window() -> void:
 	if inventory_window.is_open():
 		inventory_window.hide_window()
 		return
+	machine_window.hide_window()
 	_update_inventory_window()
 	inventory_window.show_inventory(
 		sim.inventory_snapshot(),
@@ -224,6 +308,16 @@ func _update_inventory_window() -> void:
 		selected_object,
 		_selected_object_ui_snapshot()
 	)
+
+
+func _on_inventory_slot_transfer_requested(from_ref: Dictionary, to_ref: Dictionary, amount: int) -> void:
+	if sim.transfer_inventory_slot(from_ref, to_ref, amount):
+		_update_inventory_window()
+
+
+func _on_inventory_slot_action_requested(slot_ref: Dictionary, action: String) -> void:
+	if sim.click_inventory_slot(slot_ref, action):
+		_update_inventory_window()
 
 
 func _selected_object_ui_snapshot() -> Dictionary:
@@ -460,6 +554,9 @@ func _clear_selected_object() -> void:
 
 func _update_selected_machine_window() -> void:
 	if selected_object.is_empty():
+		machine_window.hide_window()
+		return
+	if inventory_window != null and inventory_window.is_open():
 		machine_window.hide_window()
 		return
 	var snapshot: Dictionary = sim.building_ui_snapshot(selected_object_id)

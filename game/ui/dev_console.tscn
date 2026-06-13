@@ -1,0 +1,75 @@
+[gd_scene format=3 uid="uid://ctu1r4eldqfsc"]
+
+[ext_resource type="Script" path="res://game/ui/dev_console.gd" id="1_dev_console"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(0.02, 0.025, 0.025, 0.78)
+border_width_bottom = 1
+border_color = Color(0.56, 0.76, 0.42, 0.72)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_input"]
+bg_color = Color(0.035, 0.04, 0.036, 0.92)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.31, 0.35, 0.265, 0.95)
+
+[node name="DevConsole" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+script = ExtResource("1_dev_console")
+
+[node name="ConsolePanel" type="PanelContainer" parent="."]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+anchor_bottom = 0.5
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+
+[node name="Margin" type="MarginContainer" parent="ConsolePanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="Column" type="VBoxContainer" parent="ConsolePanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="Scroll" type="ScrollContainer" parent="ConsolePanel/Margin/Column"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="ScrollbackText" type="Label" parent="ConsolePanel/Margin/Column/Scroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.82, 0.84, 0.78, 1)
+theme_override_font_sizes/font_size = 14
+text = ""
+autowrap_mode = 2
+
+[node name="InputLine" type="LineEdit" parent="ConsolePanel/Margin/Column"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 30)
+layout_mode = 2
+placeholder_text = "> command"
+flat = true
+keep_editing_on_text_submit = true
+theme_override_colors/font_color = Color(0.96, 0.94, 0.78, 1)
+theme_override_colors/caret_color = Color(0.96, 0.94, 0.78, 1)
+theme_override_font_sizes/font_size = 15
+theme_override_styles/normal = SubResource("StyleBoxFlat_input")
+theme_override_styles/focus = SubResource("StyleBoxFlat_input")

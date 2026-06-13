@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://c8clmmuy2i6wj" path="res://game/main/main.gd" id="1_main"]
 [ext_resource type="Script" uid="uid://2s5aawf7ye74" path="res://game/world/environment.gd" id="2_environment"]
-[ext_resource type="Script" uid="uid://dj4sikixsjmb5" path="res://game/ui/hotbar.gd" id="3_hotbar"]
+[ext_resource type="PackedScene" uid="uid://b1g8xqngq83gq" path="res://game/ui/hotbar.tscn" id="3_hotbar"]
 [ext_resource type="PackedScene" path="res://game/player/player.tscn" id="4_player"]
 
 [sub_resource type="Environment" id="Environment_scene"]
@@ -46,16 +46,8 @@ environment = SubResource("Environment_scene")
 
 [node name="Hud" type="CanvasLayer" parent="." unique_id=1593648294]
 
-[node name="Hotbar" type="Control" parent="Hud" unique_id=352255747]
+[node name="Hotbar" parent="Hud" unique_id=352255747 instance=ExtResource("3_hotbar")]
 unique_name_in_owner = true
-layout_mode = 3
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-script = ExtResource("3_hotbar")
 
 [node name="PanelContainer" type="PanelContainer" parent="Hud" unique_id=597866796]
 offset_left = 16.0

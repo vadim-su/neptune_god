@@ -18,6 +18,9 @@ const PANEL_BORDER := Color(0.450, 0.480, 0.430, 0.55)
 const ACCENT_COLOR := Color(0.560, 0.760, 0.420, 1.0)
 const MUTED_TEXT := Color(0.620, 0.670, 0.620, 1.0)
 
+@onready var gameplay_hotbar: PanelContainer = %GameplayHotbar
+@onready var slots_row: HBoxContainer = %Slots
+
 const DEFAULT_ENTRIES := [
 	{"id": "basic_miner", "label": "Basic miner"},
 	{"id": "wooden_chest", "label": "Wooden chest"},
@@ -43,7 +46,12 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	anchors_preset = Control.PRESET_FULL_RECT
 	_hydrate_slots()
-	_build_ui()
+	_icon_renderer = BuildingIconRendererScript.new()
+	_icon_renderer.name = "BuildingIconRenderer"
+	add_child(_icon_renderer)
+	_icon_renderer.prepare_icons(_slot_entry_ids())
+	_wire_scene_slots()
+	_refresh_slot_content()
 	_select_slot(0)
 
 
@@ -112,54 +120,25 @@ func _hydrate_slots() -> void:
 			slots.append({})
 
 
-func _build_ui() -> void:
-	_icon_renderer = BuildingIconRendererScript.new()
-	_icon_renderer.name = "BuildingIconRenderer"
-	add_child(_icon_renderer)
-	_icon_renderer.prepare_icons(_slot_entry_ids())
-
+func _wire_scene_slots() -> void:
 	var frame_size := Vector2(
 		HOTBAR_SLOT_COUNT * SLOT_SIZE.x + (HOTBAR_SLOT_COUNT - 1) * SLOT_GAP + FRAME_PADDING * 2.0,
 		SLOT_SIZE.y + FRAME_PADDING * 2.0
 	)
-
-	var panel := PanelContainer.new()
-	panel.name = "GameplayHotbar"
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.custom_minimum_size = frame_size
-	panel.anchor_left = 0.5
-	panel.anchor_right = 0.5
-	panel.anchor_top = 1.0
-	panel.anchor_bottom = 1.0
-	panel.offset_left = -frame_size.x * 0.5
-	panel.offset_right = frame_size.x * 0.5
-	panel.offset_top = -frame_size.y - BOTTOM_MARGIN
-	panel.offset_bottom = -BOTTOM_MARGIN
-	panel.add_theme_stylebox_override("panel", _stylebox(PANEL_BG, PANEL_BORDER, 1, 0))
-	add_child(panel)
-
-	var margin := MarginContainer.new()
-	margin.name = "Padding"
-	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	margin.add_theme_constant_override("margin_left", 10)
-	margin.add_theme_constant_override("margin_top", 10)
-	margin.add_theme_constant_override("margin_right", 10)
-	margin.add_theme_constant_override("margin_bottom", 10)
-	panel.add_child(margin)
-
-	var row := HBoxContainer.new()
-	row.name = "Slots"
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_theme_constant_override("separation", int(SLOT_GAP))
-	margin.add_child(row)
-
+	gameplay_hotbar.custom_minimum_size = frame_size
+	gameplay_hotbar.add_theme_stylebox_override("panel", _stylebox(PANEL_BG, PANEL_BORDER, 1, 0))
+	slots_row.add_theme_constant_override("separation", int(SLOT_GAP))
+	_slot_buttons.clear()
+	_icon_rects.clear()
 	for index in HOTBAR_SLOT_COUNT:
-		_add_slot(row, index)
+		_wire_scene_slot(index)
 
 
-func _add_slot(parent: Control, index: int) -> void:
-	var button := Button.new()
-	button.name = "Slot%d" % (index + 1)
+func _wire_scene_slot(index: int) -> void:
+	var button := slots_row.get_node_or_null("Slot%d" % (index + 1)) as Button
+	if button == null:
+		push_warning("Hotbar scene is missing Slot%d" % (index + 1))
+		return
 	button.custom_minimum_size = SLOT_SIZE
 	button.focus_mode = Control.FOCUS_NONE
 	button.tooltip_text = _slot_tooltip(index)
@@ -167,13 +146,13 @@ func _add_slot(parent: Control, index: int) -> void:
 	button.mouse_filter = Control.MOUSE_FILTER_STOP
 	button.pressed.connect(_on_slot_pressed.bind(index))
 	button.gui_input.connect(_on_slot_gui_input.bind(index))
-	parent.add_child(button)
 	_slot_buttons.append(button)
 
-	var icon := TextureRect.new()
-	icon.name = "Icon"
+	var icon := button.get_node_or_null("Icon") as TextureRect
+	if icon == null:
+		push_warning("Hotbar scene slot %d is missing Icon" % (index + 1))
+		return
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.texture = _slot_texture(index)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -181,17 +160,22 @@ func _add_slot(parent: Control, index: int) -> void:
 	icon.offset_top = 3.0
 	icon.offset_right = -3.0
 	icon.offset_bottom = -3.0
-	button.add_child(icon)
 	_icon_rects.append(icon)
 
-	var hint := Label.new()
-	hint.name = "KeyHint"
-	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hint.text = _slot_key_hint(index)
-	hint.position = Vector2(4.0, 2.0)
-	hint.add_theme_font_size_override("font_size", 13)
-	hint.add_theme_color_override("font_color", MUTED_TEXT)
-	button.add_child(hint)
+	var hint := button.get_node_or_null("KeyHint") as Label
+	if hint != null:
+		hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hint.text = _slot_key_hint(index)
+		hint.position = Vector2(4.0, 2.0)
+		hint.add_theme_font_size_override("font_size", 13)
+		hint.add_theme_color_override("font_color", MUTED_TEXT)
+
+
+func _refresh_slot_content() -> void:
+	for index in _slot_buttons.size():
+		_slot_buttons[index].tooltip_text = _slot_tooltip(index)
+		if index < _icon_rects.size():
+			_icon_rects[index].texture = _slot_texture(index)
 
 
 func _on_slot_pressed(index: int) -> void:

@@ -3,11 +3,11 @@ use godot::prelude::*;
 use sim_core::building::{SimBuildingSnapshot, SimBuildingState};
 use sim_core::catalog::CoreBuildingDriver;
 use sim_core::catalog::CoreCatalog;
-use sim_core::catalog::{CoreBuildingDef, CoreBuildingKind, CoreInventoryRole};
+use sim_core::catalog::{CoreBuildingDef, CoreBuildingKind, CoreInventoryRole, CoreItemStack};
 use sim_core::command::SimCommand;
 use sim_core::ids::BuildingId;
 use sim_core::ids::TilePos;
-use sim_core::inventory::SimInventorySnapshot;
+use sim_core::inventory::{InsertMode, SimInventorySnapshot};
 use sim_core::topology::graph::Direction;
 use sim_core::units::DistanceUnits;
 use sim_core::world::SimWorld;
@@ -77,6 +77,22 @@ struct CharacterEquipmentUiSnapshot {
 struct ItemStackUiSnapshot {
     item: &'static str,
     amount: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum UiInventorySlotRef {
+    Character {
+        container_id: String,
+        slot: usize,
+    },
+    Building {
+        building_id: BuildingId,
+        role: CoreInventoryRole,
+        slot: usize,
+    },
+    Player {
+        slot: usize,
+    },
 }
 
 struct NeptuneGodotExtension;
@@ -287,6 +303,38 @@ impl NeptuneSim {
     }
 
     #[func]
+    pub fn give_item(&mut self, item_id: GString, amount: i64) -> bool {
+        let item_id = item_id.to_string();
+        let amount = amount.clamp(1, i64::from(u32::MAX)) as u32;
+        give_item_for_godot(&mut self.world, item_id.as_str(), amount)
+    }
+
+    #[func]
+    pub fn transfer_inventory_slot(
+        &mut self,
+        from_ref: VarDictionary,
+        to_ref: VarDictionary,
+        amount: i64,
+    ) -> bool {
+        let Some(from_ref) = ui_inventory_slot_ref_from_godot(&from_ref) else {
+            return false;
+        };
+        let Some(to_ref) = ui_inventory_slot_ref_from_godot(&to_ref) else {
+            return false;
+        };
+        let amount = amount.clamp(1, i64::from(u32::MAX)) as u32;
+        transfer_inventory_slot_for_godot(&mut self.world, &from_ref, &to_ref, amount)
+    }
+
+    #[func]
+    pub fn click_inventory_slot(&mut self, slot_ref: VarDictionary, action: GString) -> bool {
+        let Some(slot_ref) = ui_inventory_slot_ref_from_godot(&slot_ref) else {
+            return false;
+        };
+        click_inventory_slot_for_godot(&mut self.world, &slot_ref, action.to_string().as_str())
+    }
+
+    #[func]
     pub fn set_building_recipe(&mut self, building_id: i64, recipe_id: GString) -> bool {
         let building_id = BuildingId(building_id.max(0) as u32);
         let Some(snapshot) = self
@@ -360,6 +408,282 @@ fn remove_building_for_godot(world: &mut SimWorld, x: i32, y: i32) -> bool {
             pos: TilePos::new(x, y),
         })
         .is_ok()
+}
+
+fn give_item_for_godot(world: &mut SimWorld, item_id: &str, amount: u32) -> bool {
+    let Some(kind) = world.catalog().item_id_by_def_id(item_id) else {
+        return false;
+    };
+    world
+        .insert_into_player_inventory_for_tests(CoreItemStack { kind, amount })
+        .is_ok()
+}
+
+fn transfer_inventory_slot_for_godot(
+    world: &mut SimWorld,
+    from_ref: &UiInventorySlotRef,
+    to_ref: &UiInventorySlotRef,
+    amount: u32,
+) -> bool {
+    if amount == 0 || from_ref == to_ref {
+        return false;
+    }
+
+    let Some(source_stack) = take_ui_inventory_slot_stack(world, from_ref, amount) else {
+        return false;
+    };
+    let target_stack = ui_inventory_slot_stack(world, to_ref);
+
+    let transferred = if target_stack.is_some_and(|stack| stack.kind != source_stack.kind) {
+        transfer_inventory_slot_with_swap(world, from_ref, to_ref, source_stack)
+    } else {
+        insert_ui_inventory_slot_stack(world, to_ref, source_stack)
+    };
+
+    if transferred {
+        return true;
+    }
+
+    let _ = insert_ui_inventory_slot_stack(world, from_ref, source_stack);
+    false
+}
+
+fn click_inventory_slot_for_godot(
+    world: &mut SimWorld,
+    slot_ref: &UiInventorySlotRef,
+    action: &str,
+) -> bool {
+    match action {
+        "one" => click_inventory_slot_one(world, slot_ref),
+        "split" => click_inventory_slot_split(world, slot_ref),
+        _ => click_inventory_slot_stack(world, slot_ref),
+    }
+}
+
+fn click_inventory_slot_stack(world: &mut SimWorld, slot_ref: &UiInventorySlotRef) -> bool {
+    let Some(held) = world.take_all_from_cursor_inventory() else {
+        let Some(stack) = ui_inventory_slot_stack(world, slot_ref) else {
+            return true;
+        };
+        if let Some(taken) = take_ui_inventory_slot_stack(world, slot_ref, stack.amount) {
+            let _ = world.set_cursor_inventory_stack(Some(taken));
+        }
+        return true;
+    };
+
+    if let Some(existing) = ui_inventory_slot_stack(world, slot_ref)
+        && existing.kind != held.kind
+    {
+        let Some(taken) = take_ui_inventory_slot_stack(world, slot_ref, existing.amount) else {
+            let _ = world.set_cursor_inventory_stack(Some(held));
+            return true;
+        };
+        if insert_ui_inventory_slot_stack(world, slot_ref, held) {
+            let _ = world.set_cursor_inventory_stack(Some(taken));
+        } else {
+            let _ = insert_ui_inventory_slot_stack(world, slot_ref, taken);
+            let _ = world.set_cursor_inventory_stack(Some(held));
+        }
+        return true;
+    }
+
+    if insert_ui_inventory_slot_stack(world, slot_ref, held) {
+        let _ = world.set_cursor_inventory_stack(None);
+    } else {
+        let _ = world.set_cursor_inventory_stack(Some(held));
+    }
+    true
+}
+
+fn click_inventory_slot_one(world: &mut SimWorld, slot_ref: &UiInventorySlotRef) -> bool {
+    let Some(cursor) = world.cursor_stack() else {
+        if let Some(taken) = take_ui_inventory_slot_stack(world, slot_ref, 1) {
+            let _ = world.set_cursor_inventory_stack(Some(taken));
+        }
+        return true;
+    };
+
+    let Some(taken) = world.take_from_cursor_inventory(1) else {
+        return true;
+    };
+    if insert_ui_inventory_slot_stack(world, slot_ref, taken) {
+        return true;
+    }
+
+    let restored = CoreItemStack {
+        kind: cursor.kind,
+        amount: world
+            .cursor_stack()
+            .map_or(taken.amount, |remaining| remaining.amount + taken.amount),
+    };
+    let _ = world.set_cursor_inventory_stack(Some(restored));
+    true
+}
+
+fn click_inventory_slot_split(world: &mut SimWorld, slot_ref: &UiInventorySlotRef) -> bool {
+    if world.cursor_stack().is_some() {
+        return click_inventory_slot_stack(world, slot_ref);
+    }
+    let Some(stack) = ui_inventory_slot_stack(world, slot_ref) else {
+        return true;
+    };
+    let amount = stack.amount / 2;
+    if amount == 0 {
+        return true;
+    }
+    if let Some(taken) = take_ui_inventory_slot_stack(world, slot_ref, amount) {
+        let _ = world.set_cursor_inventory_stack(Some(taken));
+    }
+    true
+}
+
+fn transfer_inventory_slot_with_swap(
+    world: &mut SimWorld,
+    from_ref: &UiInventorySlotRef,
+    to_ref: &UiInventorySlotRef,
+    source_stack: CoreItemStack,
+) -> bool {
+    let Some(target_stack) = ui_inventory_slot_stack(world, to_ref) else {
+        return insert_ui_inventory_slot_stack(world, to_ref, source_stack);
+    };
+    let Some(taken_target_stack) = take_ui_inventory_slot_stack(world, to_ref, target_stack.amount)
+    else {
+        return false;
+    };
+
+    if !insert_ui_inventory_slot_stack(world, to_ref, source_stack) {
+        let _ = insert_ui_inventory_slot_stack(world, to_ref, taken_target_stack);
+        return false;
+    }
+
+    if insert_ui_inventory_slot_stack(world, from_ref, taken_target_stack) {
+        return true;
+    }
+
+    let _ = take_ui_inventory_slot_stack(world, to_ref, source_stack.amount);
+    let _ = insert_ui_inventory_slot_stack(world, from_ref, source_stack);
+    let _ = insert_ui_inventory_slot_stack(world, to_ref, taken_target_stack);
+    false
+}
+
+fn ui_inventory_slot_stack(
+    world: &SimWorld,
+    slot_ref: &UiInventorySlotRef,
+) -> Option<CoreItemStack> {
+    match slot_ref {
+        UiInventorySlotRef::Character { container_id, slot } => {
+            world.character_container_slot(container_id, *slot)
+        }
+        UiInventorySlotRef::Building {
+            building_id,
+            role,
+            slot,
+        } => world.inventory_slot(*building_id, *role, *slot),
+        UiInventorySlotRef::Player { slot } => world.player_inventory_slot(*slot),
+    }
+}
+
+fn take_ui_inventory_slot_stack(
+    world: &mut SimWorld,
+    slot_ref: &UiInventorySlotRef,
+    amount: u32,
+) -> Option<CoreItemStack> {
+    match slot_ref {
+        UiInventorySlotRef::Character { container_id, slot } => {
+            world.take_from_character_container_slot(container_id, *slot, amount)
+        }
+        UiInventorySlotRef::Building {
+            building_id,
+            role,
+            slot,
+        } => world
+            .take_from_inventory_stack(*building_id, *role, *slot, amount)
+            .ok(),
+        UiInventorySlotRef::Player { slot } => world.take_from_player_inventory_slot(*slot, amount),
+    }
+}
+
+fn insert_ui_inventory_slot_stack(
+    world: &mut SimWorld,
+    slot_ref: &UiInventorySlotRef,
+    stack: CoreItemStack,
+) -> bool {
+    match slot_ref {
+        UiInventorySlotRef::Character { container_id, slot } => world
+            .insert_into_character_container_slot(
+                container_id,
+                *slot,
+                stack,
+                InsertMode::AtomicAllOrNothing,
+            )
+            .rejected
+            .is_none(),
+        UiInventorySlotRef::Building {
+            building_id,
+            role,
+            slot,
+        } => world
+            .insert_into_inventory_slot(
+                *building_id,
+                *role,
+                *slot,
+                stack,
+                InsertMode::AtomicAllOrNothing,
+            )
+            .rejected
+            .is_none(),
+        UiInventorySlotRef::Player { slot } => world
+            .insert_into_player_inventory_slot(*slot, stack, InsertMode::AtomicAllOrNothing)
+            .rejected
+            .is_none(),
+    }
+}
+
+fn ui_inventory_slot_ref_from_godot(dictionary: &VarDictionary) -> Option<UiInventorySlotRef> {
+    let kind = dictionary
+        .get("kind")?
+        .try_to::<GString>()
+        .ok()?
+        .to_string();
+    match kind.as_str() {
+        "character" => Some(UiInventorySlotRef::Character {
+            container_id: dictionary
+                .get("container")?
+                .try_to::<GString>()
+                .ok()?
+                .to_string(),
+            slot: dictionary.get("slot")?.try_to::<i64>().ok()?.max(0) as usize,
+        }),
+        "building" => Some(UiInventorySlotRef::Building {
+            building_id: BuildingId(
+                dictionary.get("building_id")?.try_to::<i64>().ok()?.max(0) as u32
+            ),
+            role: core_inventory_role_from_ui(
+                dictionary
+                    .get("role")?
+                    .try_to::<GString>()
+                    .ok()?
+                    .to_string()
+                    .as_str(),
+            )?,
+            slot: dictionary.get("slot")?.try_to::<i64>().ok()?.max(0) as usize,
+        }),
+        "player" => Some(UiInventorySlotRef::Player {
+            slot: dictionary.get("slot")?.try_to::<i64>().ok()?.max(0) as usize,
+        }),
+        _ => None,
+    }
+}
+
+fn core_inventory_role_from_ui(role: &str) -> Option<CoreInventoryRole> {
+    match role {
+        "Input" => Some(CoreInventoryRole::Input),
+        "Output" => Some(CoreInventoryRole::Output),
+        "Fuel" => Some(CoreInventoryRole::Fuel),
+        "Storage" => Some(CoreInventoryRole::Storage),
+        "Hand" => Some(CoreInventoryRole::InserterHand),
+        _ => None,
+    }
 }
 
 fn building_footprint_for_godot(
@@ -1108,6 +1432,256 @@ mod tests {
             Some(ItemStackUiSnapshot {
                 item: "coal",
                 amount: 3
+            })
+        );
+    }
+
+    #[test]
+    fn give_item_bridge_inserts_known_item_into_player_inventory() {
+        let mut world = SimWorld::with_catalog(CoreCatalog::for_tests());
+
+        assert!(give_item_for_godot(&mut world, "iron_ore", 5));
+        assert!(!give_item_for_godot(&mut world, "missing_item", 5));
+
+        let snapshot = inventory_ui_snapshot_data(&world);
+        assert_eq!(
+            snapshot.player_slots[0],
+            Some(ItemStackUiSnapshot {
+                item: "iron_ore",
+                amount: 5
+            })
+        );
+    }
+
+    #[test]
+    fn inventory_transfer_bridge_moves_player_stack_to_machine_fuel_slot() {
+        let mut world = SimWorld::with_catalog(CoreCatalog::for_tests());
+        assert!(place_building_for_godot(
+            &mut world,
+            "stone_furnace",
+            10,
+            20,
+            0
+        ));
+        let building_id = world.building_snapshots()[0].id;
+        assert_eq!(
+            world
+                .insert_into_player_inventory_slot(
+                    0,
+                    CoreItemStack {
+                        kind: sim_core::catalog::TEST_COAL,
+                        amount: 5,
+                    },
+                    InsertMode::AtomicAllOrNothing,
+                )
+                .rejected,
+            None
+        );
+
+        assert!(transfer_inventory_slot_for_godot(
+            &mut world,
+            &UiInventorySlotRef::Player { slot: 0 },
+            &UiInventorySlotRef::Building {
+                building_id,
+                role: CoreInventoryRole::Fuel,
+                slot: 0,
+            },
+            5,
+        ));
+
+        assert_eq!(world.player_inventory_slot(0), None);
+        assert_eq!(
+            world.inventory_slot(building_id, CoreInventoryRole::Fuel, 0),
+            Some(CoreItemStack {
+                kind: sim_core::catalog::TEST_COAL,
+                amount: 5,
+            })
+        );
+    }
+
+    #[test]
+    fn inventory_transfer_bridge_rejects_invalid_machine_slot_without_losing_player_stack() {
+        let mut world = SimWorld::with_catalog(CoreCatalog::for_tests());
+        assert!(place_building_for_godot(
+            &mut world,
+            "stone_furnace",
+            10,
+            20,
+            0
+        ));
+        let building_id = world.building_snapshots()[0].id;
+        let plate = CoreItemStack {
+            kind: sim_core::catalog::TEST_IRON_PLATE,
+            amount: 5,
+        };
+        assert_eq!(
+            world
+                .insert_into_player_inventory_slot(0, plate, InsertMode::AtomicAllOrNothing,)
+                .rejected,
+            None
+        );
+
+        assert!(!transfer_inventory_slot_for_godot(
+            &mut world,
+            &UiInventorySlotRef::Player { slot: 0 },
+            &UiInventorySlotRef::Building {
+                building_id,
+                role: CoreInventoryRole::Fuel,
+                slot: 0,
+            },
+            5,
+        ));
+
+        assert_eq!(world.player_inventory_slot(0), Some(plate));
+        assert_eq!(
+            world.inventory_slot(building_id, CoreInventoryRole::Fuel, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn inventory_transfer_bridge_moves_between_player_slots() {
+        let mut world = SimWorld::with_catalog(CoreCatalog::for_tests());
+        let ore = CoreItemStack {
+            kind: sim_core::catalog::TEST_IRON_ORE,
+            amount: 7,
+        };
+        assert_eq!(
+            world
+                .insert_into_player_inventory_slot(0, ore, InsertMode::AtomicAllOrNothing,)
+                .rejected,
+            None
+        );
+
+        assert!(transfer_inventory_slot_for_godot(
+            &mut world,
+            &UiInventorySlotRef::Player { slot: 0 },
+            &UiInventorySlotRef::Player { slot: 1 },
+            7,
+        ));
+
+        assert_eq!(world.player_inventory_slot(0), None);
+        assert_eq!(world.player_inventory_slot(1), Some(ore));
+    }
+
+    #[test]
+    fn inventory_click_bridge_moves_stack_through_cursor() {
+        let mut world = SimWorld::with_catalog(CoreCatalog::for_tests());
+        let ore = CoreItemStack {
+            kind: sim_core::catalog::TEST_IRON_ORE,
+            amount: 7,
+        };
+        assert_eq!(
+            world
+                .insert_into_player_inventory_slot(0, ore, InsertMode::AtomicAllOrNothing)
+                .rejected,
+            None
+        );
+
+        assert!(click_inventory_slot_for_godot(
+            &mut world,
+            &UiInventorySlotRef::Player { slot: 0 },
+            "stack",
+        ));
+        assert_eq!(world.player_inventory_slot(0), None);
+        assert_eq!(world.cursor_stack(), Some(ore));
+
+        assert!(click_inventory_slot_for_godot(
+            &mut world,
+            &UiInventorySlotRef::Player { slot: 1 },
+            "stack",
+        ));
+        assert_eq!(world.cursor_stack(), None);
+        assert_eq!(world.player_inventory_slot(1), Some(ore));
+    }
+
+    #[test]
+    fn inventory_click_bridge_right_click_moves_one_item() {
+        let mut world = SimWorld::with_catalog(CoreCatalog::for_tests());
+        assert_eq!(
+            world
+                .insert_into_player_inventory_slot(
+                    0,
+                    CoreItemStack {
+                        kind: sim_core::catalog::TEST_IRON_ORE,
+                        amount: 5,
+                    },
+                    InsertMode::AtomicAllOrNothing,
+                )
+                .rejected,
+            None
+        );
+
+        assert!(click_inventory_slot_for_godot(
+            &mut world,
+            &UiInventorySlotRef::Player { slot: 0 },
+            "one",
+        ));
+        assert_eq!(
+            world.player_inventory_slot(0),
+            Some(CoreItemStack {
+                kind: sim_core::catalog::TEST_IRON_ORE,
+                amount: 4,
+            })
+        );
+        assert_eq!(
+            world.cursor_stack(),
+            Some(CoreItemStack {
+                kind: sim_core::catalog::TEST_IRON_ORE,
+                amount: 1,
+            })
+        );
+
+        assert!(click_inventory_slot_for_godot(
+            &mut world,
+            &UiInventorySlotRef::Player { slot: 1 },
+            "one",
+        ));
+        assert_eq!(world.cursor_stack(), None);
+        assert_eq!(
+            world.player_inventory_slot(1),
+            Some(CoreItemStack {
+                kind: sim_core::catalog::TEST_IRON_ORE,
+                amount: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn inventory_click_bridge_ctrl_click_splits_half_to_cursor() {
+        let mut world = SimWorld::with_catalog(CoreCatalog::for_tests());
+        assert_eq!(
+            world
+                .insert_into_player_inventory_slot(
+                    0,
+                    CoreItemStack {
+                        kind: sim_core::catalog::TEST_IRON_ORE,
+                        amount: 5,
+                    },
+                    InsertMode::AtomicAllOrNothing,
+                )
+                .rejected,
+            None
+        );
+
+        assert!(click_inventory_slot_for_godot(
+            &mut world,
+            &UiInventorySlotRef::Player { slot: 0 },
+            "split",
+        ));
+
+        assert_eq!(
+            world.player_inventory_slot(0),
+            Some(CoreItemStack {
+                kind: sim_core::catalog::TEST_IRON_ORE,
+                amount: 3,
+            })
+        );
+        assert_eq!(
+            world.cursor_stack(),
+            Some(CoreItemStack {
+                kind: sim_core::catalog::TEST_IRON_ORE,
+                amount: 2,
             })
         );
     }

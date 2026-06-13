@@ -1,0 +1,77 @@
+[gd_scene format=3 uid="uid://ci4ktim0l5cbk"]
+
+[ext_resource type="Script" path="res://game/ui/game_window.gd" id="1_game_window"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_panel"]
+bg_color = Color(0.07, 0.075, 0.065, 0.96)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.56, 0.76, 0.42, 0.72)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_header"]
+bg_color = Color(0.105, 0.112, 0.098, 0.98)
+border_width_bottom = 1
+border_color = Color(0.31, 0.35, 0.265, 0.95)
+
+[node name="GameWindow" type="PanelContainer"]
+custom_minimum_size = Vector2(420, 280)
+offset_right = 420.0
+offset_bottom = 280.0
+mouse_filter = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_panel")
+script = ExtResource("1_game_window")
+draggable = true
+header_path = NodePath("Margin/Column/Header")
+close_button_path = NodePath("Margin/Column/Header/HeaderRow/CloseButton")
+title_label_path = NodePath("Margin/Column/Header/HeaderRow/WindowTitle")
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 10
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
+
+[node name="Column" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Header" type="PanelContainer" parent="Margin/Column"]
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+mouse_filter = 0
+theme_override_styles/panel = SubResource("StyleBoxFlat_header")
+
+[node name="HeaderRow" type="HBoxContainer" parent="Margin/Column/Header"]
+layout_mode = 2
+
+[node name="WindowTitle" type="Label" parent="Margin/Column/Header/HeaderRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.92, 0.94, 0.86, 1)
+theme_override_font_sizes/font_size = 20
+text = "Game Window"
+
+[node name="CloseButton" type="Button" parent="Margin/Column/Header/HeaderRow"]
+custom_minimum_size = Vector2(28, 28)
+layout_mode = 2
+text = "X"
+
+[node name="Body" type="MarginContainer" parent="Margin/Column"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 200)
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/margin_left = 0
+theme_override_constants/margin_top = 0
+theme_override_constants/margin_right = 0
+theme_override_constants/margin_bottom = 0
+
+[node name="PreviewText" type="Label" parent="Margin/Column/Body"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.82, 0.84, 0.78, 1)
+theme_override_font_sizes/font_size = 13
+text = "Reusable window body"
+vertical_alignment = 1
