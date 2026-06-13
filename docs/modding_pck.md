@@ -192,6 +192,33 @@ adds:
 The sidecar `mods/extra_ores.json` declares the dependency on `main` so the
 bootstrap can sort the PCK before mounting it.
 
+## Development build
+
+`mods/main.pck` is required even in development. The `Rust Build` editor plugin
+builds dev mod packs before Godot starts the project, so the normal editor Play
+button can boot through the same mod loader as the exported layout.
+
+The same workflow is available from the command line:
+
+```sh
+tools/dev_build_mods.sh
+```
+
+This command builds the Rust GDExtension, exports the PCK layout to
+`build/dev_dist`, and copies generated mod packs back into `mods/*.pck` for
+editor runs.
+
+To build and run the packed bootstrap directly:
+
+```sh
+tools/dev_run_pck.sh
+```
+
+The editor plugin also exposes two Project menu actions:
+
+- `Neptune: Build Dev Mod Packs`
+- `Neptune: Build & Run PCK Layout`
+
 ## Building the current layout
 
 Use:
