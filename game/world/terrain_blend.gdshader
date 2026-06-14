@@ -1,5 +1,4 @@
 shader_type spatial;
-render_mode cull_disabled;
 
 uniform sampler2D ground_texture : source_color, repeat_enable;
 uniform sampler2D stone_texture : source_color, repeat_enable;

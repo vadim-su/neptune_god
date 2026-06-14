@@ -26,5 +26,5 @@ enabled=PackedStringArray("res://addons/gut/plugin.cfg", "res://addons/resource_
 [rendering]
 
 rendering_device/driver.windows="d3d12"
-lights_and_shadows/directional_shadow/size=8192
-lights_and_shadows/directional_shadow/soft_shadow_filter_quality=3
+lights_and_shadows/directional_shadow/size=4096
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=2

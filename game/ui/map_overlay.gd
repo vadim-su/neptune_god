@@ -1,8 +1,11 @@
 extends Control
 class_name MapOverlay
 
+const ItemCatalogScript := preload("res://game/items/item_catalog.gd")
+
 const RESOURCE_VEIN_NEIGHBOR_DISTANCE := 2
 const DETAILED_WORLD_PIXELS_PER_TILE := 18.0
+const DETAILED_WORLD_TRANSITION_PIXELS := 8.0
 const MIN_PIXELS_PER_TILE := 1.0
 const MAX_PIXELS_PER_TILE := 48.0
 const MINIMAP_SIZE := Vector2(160.0, 160.0)
@@ -47,6 +50,8 @@ var _pixels_per_tile := 4.0
 var _map_center := Vector2.ZERO
 var _center_initialized := false
 var _schematic_texture: ImageTexture
+var _schematic_texture_bounds := Rect2i()
+var _schematic_texture_dirty := true
 
 
 static func collect_resource_vein(start: Vector2i, tiles: Array, visible_rect: Rect2i) -> Dictionary:
@@ -170,15 +175,21 @@ func set_world_snapshot(tiles: Array, buildings: Array, visible_rect: Rect2i, pl
 	_buildings = buildings.duplicate(true)
 	if visible_rect.size.x > 0 and visible_rect.size.y > 0:
 		_visible_rect = visible_rect
+	_schematic_texture_dirty = true
 	set_player_position(player_position)
 	queue_redraw()
 
 
 func set_player_position(position: Vector3) -> void:
+	if _center_initialized and _player_position == position:
+		return
 	_player_position = position
 	if not _center_initialized:
 		center_on_player()
-	queue_redraw()
+	elif is_fullscreen_open():
+		_map_center = Vector2(_player_position.x, _player_position.z)
+	if visible:
+		queue_redraw()
 
 
 func center_on_player() -> void:
@@ -207,12 +218,29 @@ func zoom_by(factor: float) -> void:
 	set_pixels_per_tile(_pixels_per_tile * factor)
 
 
+func detailed_world_blend() -> float:
+	if not is_fullscreen_open():
+		return 0.0
+	var half_width := DETAILED_WORLD_TRANSITION_PIXELS * 0.5
+	return smoothstep(
+		DETAILED_WORLD_PIXELS_PER_TILE - half_width,
+		DETAILED_WORLD_PIXELS_PER_TILE + half_width,
+		_pixels_per_tile
+	)
+
+
 func detailed_world_visible() -> bool:
-	return is_fullscreen_open() and _pixels_per_tile >= DETAILED_WORLD_PIXELS_PER_TILE
+	return detailed_world_blend() >= 1.0
 
 
 func should_draw_chart_layer() -> bool:
-	return visible
+	return chart_layer_alpha() > 0.0
+
+
+func chart_layer_alpha() -> float:
+	if not visible:
+		return 0.0
+	return 1.0 - detailed_world_blend()
 
 
 func schematic_image_for_tests(bounds: Rect2i) -> Image:
@@ -220,7 +248,11 @@ func schematic_image_for_tests(bounds: Rect2i) -> Image:
 
 
 func schematic_texture_for_tests(bounds: Rect2i) -> ImageTexture:
-	return _rebuild_schematic_texture(bounds)
+	return _schematic_texture_for_bounds(bounds)
+
+
+func resource_color_for_tests(resource_id: String, terrain_color: Color) -> Color:
+	return _resource_color(resource_id, terrain_color)
 
 
 func _draw() -> void:
@@ -229,14 +261,14 @@ func _draw() -> void:
 
 	var bounds := _current_bounds()
 	var tile_scale := _tile_scale(bounds)
-	var map_alpha := 0.34 if detailed_world_visible() else 0.88
-	if _is_minimap:
-		map_alpha = 0.86
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.035, 0.055, 0.045, map_alpha), true)
+	var chart_alpha := chart_layer_alpha()
+	if chart_alpha > 0.0:
+		var map_alpha := 0.86 if _is_minimap else 0.88
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.035, 0.055, 0.045, map_alpha * chart_alpha), true)
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.45, 0.58, 0.48, 0.80), false, 1.0)
 
-	if should_draw_chart_layer():
-		_draw_schematic_texture(bounds, tile_scale)
+	if chart_alpha > 0.0:
+		_draw_schematic_texture(bounds, tile_scale, chart_alpha)
 	_draw_player_marker(bounds, tile_scale)
 	if is_fullscreen_open():
 		_draw_hovered_resource_vein(bounds, tile_scale)
@@ -261,17 +293,31 @@ func _tile_scale(bounds: Rect2i) -> float:
 	return minf(size.x / float(maxi(bounds.size.x, 1)), size.y / float(maxi(bounds.size.y, 1)))
 
 
-func _draw_schematic_texture(bounds: Rect2i, tile_scale: float) -> void:
-	var texture := _rebuild_schematic_texture(bounds)
+func _draw_schematic_texture(bounds: Rect2i, tile_scale: float, alpha: float) -> void:
+	var texture := _schematic_texture_for_bounds(bounds)
 	draw_texture_rect(
 		texture,
 		Rect2(Vector2.ZERO, Vector2(float(bounds.size.x), float(bounds.size.y)) * tile_scale),
-		false
+		false,
+		Color(1.0, 1.0, 1.0, alpha)
 	)
+
+
+func _schematic_texture_for_bounds(bounds: Rect2i) -> ImageTexture:
+	if (
+		not _schematic_texture_dirty
+		and _schematic_texture != null
+		and _schematic_texture_bounds.position == bounds.position
+		and _schematic_texture_bounds.size == bounds.size
+	):
+		return _schematic_texture
+	return _rebuild_schematic_texture(bounds)
 
 
 func _rebuild_schematic_texture(bounds: Rect2i) -> ImageTexture:
 	_schematic_texture = ImageTexture.create_from_image(_schematic_image(bounds))
+	_schematic_texture_bounds = bounds
+	_schematic_texture_dirty = false
 	return _schematic_texture
 
 
@@ -291,8 +337,8 @@ func _schematic_image(bounds: Rect2i) -> Image:
 		var color: Color = TERRAIN_COLORS.get(str(tile.get("terrain", "ground")), TERRAIN_COLORS["ground"])
 		var resource_id := str(tile.get("resource", ""))
 		if not resource_id.is_empty() and int(tile.get("amount", 0)) > 0:
-			color = RESOURCE_COLORS.get(resource_id, color).lerp(Color.WHITE, 0.08)
-		image.set_pixel(pos.x - bounds.position.x, bounds.position.y + bounds.size.y - 1 - pos.y, color)
+			color = _resource_color(resource_id, color).lerp(Color.WHITE, 0.08)
+		image.set_pixel(_tile_image_x(pos, bounds), _tile_image_y(pos, bounds), color)
 
 	for raw_building: Variant in _buildings:
 		var building: Dictionary = raw_building
@@ -302,7 +348,7 @@ func _schematic_image(bounds: Rect2i) -> Image:
 			var tile: Dictionary = raw_tile
 			var pos := Vector2i(int(tile.get("x", 0)), int(tile.get("y", 0)))
 			if bounds.has_point(pos):
-				image.set_pixel(pos.x - bounds.position.x, bounds.position.y + bounds.size.y - 1 - pos.y, color)
+				image.set_pixel(_tile_image_x(pos, bounds), _tile_image_y(pos, bounds), color)
 
 	return image
 
@@ -335,13 +381,13 @@ func _draw_hovered_resource_vein(bounds: Rect2i, tile_scale: float) -> void:
 	if vein.is_empty():
 		return
 	var color := Color(0.50, 0.95, 1.0, 0.92)
-	if not detailed_world_visible():
+	if detailed_world_blend() < 1.0:
 		for raw_tile: Variant in vein["tiles"]:
 			var tile: Vector2i = raw_tile
 			if bounds.has_point(tile):
 				draw_rect(Rect2(_tile_to_local(tile, bounds, tile_scale), Vector2(tile_scale, tile_scale)), color, false, 2.0)
 	var font := get_theme_default_font()
-	var label := "%s: %d" % [RESOURCE_LABELS.get(str(vein["resource"]), str(vein["resource"])), int(vein["amount"])]
+	var label := "%s: %d" % [_resource_label(str(vein["resource"])), int(vein["amount"])]
 	draw_string(
 		font,
 		get_local_mouse_position() + Vector2(14.0, -8.0),
@@ -355,15 +401,32 @@ func _draw_hovered_resource_vein(bounds: Rect2i, tile_scale: float) -> void:
 
 func _tile_to_local(tile: Vector2i, bounds: Rect2i, tile_scale: float) -> Vector2:
 	return Vector2(
-		float(tile.x - bounds.position.x) * tile_scale,
+		float(_tile_image_x(tile, bounds)) * tile_scale,
 		float(bounds.position.y + bounds.size.y - 1 - tile.y) * tile_scale
 	)
 
 
 func _local_to_tile(local: Vector2, bounds: Rect2i, tile_scale: float) -> Vector2i:
-	var tile_x := bounds.position.x + int(floor(local.x / tile_scale))
+	var local_tile_x := int(floor(local.x / tile_scale))
+	var tile_x := bounds.position.x + local_tile_x
+	if _mirror_chart_x():
+		tile_x = bounds.position.x + bounds.size.x - 1 - local_tile_x
 	var tile_y := bounds.position.y + bounds.size.y - 1 - int(floor(local.y / tile_scale))
 	return Vector2i(tile_x, tile_y)
+
+
+func _tile_image_x(tile: Vector2i, bounds: Rect2i) -> int:
+	if _mirror_chart_x():
+		return bounds.position.x + bounds.size.x - 1 - tile.x
+	return tile.x - bounds.position.x
+
+
+func _tile_image_y(tile: Vector2i, bounds: Rect2i) -> int:
+	return bounds.position.y + bounds.size.y - 1 - tile.y
+
+
+func _mirror_chart_x() -> bool:
+	return not _is_minimap
 
 
 func _color_from_id(id: String) -> Color:
@@ -372,6 +435,19 @@ func _color_from_id(id: String) -> Color:
 	var g := 0.30 + float((hash_value >> 8) & 0x3f) / 160.0
 	var b := 0.30 + float((hash_value >> 16) & 0x3f) / 160.0
 	return Color(r, g, b, 1.0)
+
+
+func _resource_color(resource_id: String, terrain_color: Color) -> Color:
+	if RESOURCE_COLORS.has(resource_id):
+		return RESOURCE_COLORS[resource_id]
+	var catalog_color := ItemCatalogScript.color(resource_id)
+	if catalog_color == Color(0.54, 0.56, 0.54):
+		return terrain_color
+	return catalog_color
+
+
+func _resource_label(resource_id: String) -> String:
+	return RESOURCE_LABELS.get(resource_id, ItemCatalogScript.display_name(resource_id))
 
 
 func _gui_input(event: InputEvent) -> void:

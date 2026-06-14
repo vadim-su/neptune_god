@@ -24,6 +24,10 @@ const CAMERA_MAX_DISTANCE := 140.0
 const CAMERA_TARGET_HEIGHT := 0.75
 const CAMERA_GENERATION_MARGIN_TILES := 16
 const CAMERA_FOOTPRINT_FALLBACK_RADIUS := 48
+const CAMERA_MAX_VISIBLE_TILE_RADIUS := 128
+const CAMERA_MIN_ELEVATION := deg_to_rad(30.0)
+const CAMERA_MAX_ELEVATION := deg_to_rad(76.0)
+const CAMERA_FAR_PADDING := 32.0
 const BUILD_GHOST_Y := 0.075
 const PLAYER_COLLISION_RADIUS := 0.32
 const PLAYER_ZONE_RADIUS := 12.0
@@ -59,6 +63,7 @@ var visible_chunk_rect_valid := false
 var visible_chunk_rect := Rect2i()
 var player_zone_overlay: MeshInstance3D
 var initialized := false
+var map_snapshot_dirty := true
 
 
 func _ready() -> void:
@@ -136,7 +141,7 @@ func _process(_delta: float) -> void:
 	_sync_world_around_camera(false)
 	_update_player_zone_overlay()
 	_update_build_preview()
-	_update_map_overlays()
+	_update_map_overlay_player_position()
 
 
 func _physics_process(_delta: float) -> void:
@@ -192,8 +197,8 @@ func _input(event: InputEvent) -> void:
 		camera_yaw -= event.relative.x * 0.006
 		camera_elevation = clamp(
 			camera_elevation - event.relative.y * 0.006,
-			deg_to_rad(18.0),
-			deg_to_rad(76.0)
+			CAMERA_MIN_ELEVATION,
+			CAMERA_MAX_ELEVATION
 		)
 		_update_camera()
 		get_viewport().set_input_as_handled()
@@ -253,9 +258,9 @@ func _ui_blocks_gameplay_input() -> bool:
 
 
 func _update_camera() -> void:
-	if map_overlay != null and map_overlay.detailed_world_visible():
-		_update_detailed_map_camera()
-		return
+	var detailed_blend := 0.0
+	if map_overlay != null:
+		detailed_blend = map_overlay.detailed_world_blend()
 
 	var target: Vector3 = player.global_position + Vector3.UP * CAMERA_TARGET_HEIGHT
 	var horizontal_distance := camera_distance * cos(camera_elevation)
@@ -264,19 +269,42 @@ func _update_camera() -> void:
 		camera_distance * sin(camera_elevation),
 		horizontal_distance * cos(camera_yaw)
 	)
-	camera.global_position = target + offset
-	camera.look_at(target, Vector3.UP)
+	var gameplay_position := target + offset
+	camera.far = _gameplay_camera_far_clip()
+	if detailed_blend <= 0.0:
+		camera.global_position = gameplay_position
+		camera.look_at(target, Vector3.UP)
+		return
+
+	var detailed_target := Vector3(player.global_position.x, 0.0, player.global_position.z)
+	var viewport_height := get_viewport().get_visible_rect().size.y
+	var height: float = _detailed_map_camera_height(
+		map_overlay.pixels_per_tile(),
+		viewport_height,
+		camera.fov
+	)
+	var detailed_position := detailed_target + Vector3(0.0, height, 0.02)
+	camera.global_position = gameplay_position.lerp(detailed_position, detailed_blend)
+	var up_vector := _map_camera_up_vector(detailed_blend)
+	camera.look_at(target.lerp(detailed_target, detailed_blend), up_vector)
 
 
-func _update_detailed_map_camera() -> void:
-	var target := Vector3(player.global_position.x, 0.0, player.global_position.z)
-	var height: float = clamp(360.0 / maxf(map_overlay.pixels_per_tile(), 1.0), 18.0, 70.0)
-	camera.global_position = target + Vector3(0.0, height, 0.02)
-	camera.look_at(target, Vector3.FORWARD)
+func _map_camera_up_vector(detailed_blend: float) -> Vector3:
+	return Vector3.UP.lerp(Vector3.BACK, detailed_blend).normalized()
+
+
+func _detailed_map_camera_height(pixels_per_tile: float, viewport_height: float, fov_degrees: float) -> float:
+	var visible_world_height := maxf(viewport_height, 1.0) / maxf(pixels_per_tile, 1.0)
+	var half_fov := deg_to_rad(fov_degrees) * 0.5
+	return visible_world_height / (2.0 * tan(half_fov))
+
+
+func _gameplay_camera_far_clip() -> float:
+	return camera_distance + float(CAMERA_MAX_VISIBLE_TILE_RADIUS) + CAMERA_FAR_PADDING
 
 
 func _sync_world_around_camera(force: bool) -> void:
-	var chunk_rect := _visible_chunk_rect_for(_camera_ground_tile_rect(), player.global_position)
+	var chunk_rect := _streaming_chunk_rect_for(player.global_position)
 	if not force and visible_chunk_rect_valid and visible_chunk_rect == chunk_rect:
 		return
 
@@ -291,6 +319,7 @@ func _sync_world_around_camera(force: bool) -> void:
 	environment.sync_chunks(sim, _chunks_in_rect(min_chunk, max_chunk))
 	visible_chunk_rect = chunk_rect
 	visible_chunk_rect_valid = true
+	_mark_map_snapshot_dirty()
 	_update_status_label()
 	_update_map_overlays()
 
@@ -319,15 +348,32 @@ func _toggle_map_overlay() -> void:
 	_update_camera()
 
 
-func _update_map_overlays() -> void:
+func _update_map_overlays(force_snapshot: bool = false) -> void:
 	if environment == null or minimap == null or map_overlay == null or sim == null or player == null:
 		return
-	var tiles: Array = environment.visible_tiles()
-	var tile_rect: Rect2i = environment.visible_tile_rect()
-	var buildings: Array = sim.buildings()
 	minimap.visible = not map_overlay.is_fullscreen_open()
+	if not force_snapshot and not map_snapshot_dirty:
+		_update_map_overlay_player_position()
+		return
+	var visible_snapshot: Dictionary = environment.visible_tile_snapshot()
+	var tiles: Array = visible_snapshot["tiles"]
+	var tile_rect: Rect2i = visible_snapshot["rect"]
+	var buildings: Array = sim.buildings()
 	minimap.set_world_snapshot(tiles, buildings, tile_rect, player.global_position)
 	map_overlay.set_world_snapshot(tiles, buildings, tile_rect, player.global_position)
+	map_snapshot_dirty = false
+
+
+func _update_map_overlay_player_position() -> void:
+	if minimap == null or map_overlay == null or player == null:
+		return
+	minimap.visible = not map_overlay.is_fullscreen_open()
+	minimap.set_player_position(player.global_position)
+	map_overlay.set_player_position(player.global_position)
+
+
+func _mark_map_snapshot_dirty() -> void:
+	map_snapshot_dirty = true
 
 
 func _visible_chunk_rect_for(tile_rect: Rect2i, player_position: Vector3) -> Rect2i:
@@ -336,10 +382,27 @@ func _visible_chunk_rect_for(tile_rect: Rect2i, player_position: Vector3) -> Rec
 	var player_tile := _world_to_tile(player_position)
 	min_tile = Vector2i(mini(min_tile.x, player_tile.x), mini(min_tile.y, player_tile.y))
 	max_tile = Vector2i(maxi(max_tile.x, player_tile.x), maxi(max_tile.y, player_tile.y))
+	min_tile = _clamp_tile_to_visible_radius(min_tile, player_tile)
+	max_tile = _clamp_tile_to_visible_radius(max_tile, player_tile)
 
 	var min_chunk := _tile_to_chunk(min_tile)
 	var max_chunk := _tile_to_chunk(max_tile)
 	return Rect2i(min_chunk, max_chunk - min_chunk + Vector2i.ONE)
+
+
+func _streaming_chunk_rect_for(player_position: Vector3) -> Rect2i:
+	var player_chunk := _tile_to_chunk(_world_to_tile(player_position))
+	var chunk_radius := int(ceil(float(CAMERA_MAX_VISIBLE_TILE_RADIUS) / float(chunk_size)))
+	var min_chunk := player_chunk - Vector2i(chunk_radius, chunk_radius)
+	var max_chunk := player_chunk + Vector2i(chunk_radius, chunk_radius)
+	return Rect2i(min_chunk, max_chunk - min_chunk + Vector2i.ONE)
+
+
+func _clamp_tile_to_visible_radius(tile: Vector2i, center: Vector2i) -> Vector2i:
+	return Vector2i(
+		clampi(tile.x, center.x - CAMERA_MAX_VISIBLE_TILE_RADIUS, center.x + CAMERA_MAX_VISIBLE_TILE_RADIUS),
+		clampi(tile.y, center.y - CAMERA_MAX_VISIBLE_TILE_RADIUS, center.y + CAMERA_MAX_VISIBLE_TILE_RADIUS)
+	)
 
 
 func _camera_ground_tile_rect() -> Rect2i:
@@ -701,6 +764,7 @@ func _try_place_selected_building() -> void:
 		_render_buildings_from_sim()
 		_update_build_preview()
 		_update_status_label()
+		_mark_map_snapshot_dirty()
 		_update_map_overlays()
 		get_viewport().set_input_as_handled()
 
@@ -738,6 +802,7 @@ func _try_remove_building_at_pointer() -> void:
 	_render_buildings_from_sim()
 	_update_build_preview()
 	_update_status_label()
+	_mark_map_snapshot_dirty()
 	_update_map_overlays()
 
 

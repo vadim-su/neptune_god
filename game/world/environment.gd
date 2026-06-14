@@ -1,5 +1,7 @@
 extends Node3D
 
+const ItemCatalogScript := preload("res://game/items/item_catalog.gd")
+
 const TILE_SIZE := 1.0
 const TERRAIN_Y := 0.0
 const RESOURCE_Y := 0.035
@@ -95,6 +97,14 @@ func visible_tiles() -> Array:
 			if bool(tile.get("render", true)):
 				tiles.append(tile)
 	return tiles
+
+
+func visible_tile_snapshot() -> Dictionary:
+	var tiles := visible_tiles()
+	return {
+		"tiles": tiles,
+		"rect": _bounds_for_tiles(tiles),
+	}
 
 
 func visible_tile_rect() -> Rect2i:
@@ -229,7 +239,6 @@ func _terrain_blend_material() -> ShaderMaterial:
 func _resource_material(resource_id: String) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.roughness = 0.86
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	var texture: Texture2D
 	var texture_path: String = RESOURCE_TEXTURES.get(resource_id, "")
 	if not texture_path.is_empty():
@@ -238,8 +247,14 @@ func _resource_material(resource_id: String) -> StandardMaterial3D:
 		material.albedo_color = Color.WHITE
 		material.albedo_texture = texture
 	else:
-		material.albedo_color = RESOURCE_COLORS.get(resource_id, Color.WHITE)
+		material.albedo_color = _resource_color(resource_id)
 	return material
+
+
+func _resource_color(resource_id: String) -> Color:
+	if RESOURCE_COLORS.has(resource_id):
+		return RESOURCE_COLORS[resource_id]
+	return ItemCatalogScript.color(resource_id)
 
 
 func _add_resource_chunk(chunk: Vector2i, tiles: Array) -> Node3D:
