@@ -99,8 +99,26 @@ func visible_tiles() -> Array:
 	return tiles
 
 
+func explored_tiles() -> Array:
+	var tiles: Array = []
+	for chunk: Vector2i in _tiles_by_chunk.keys():
+		for raw_tile: Variant in _tiles_by_chunk.get(chunk, []):
+			var tile: Dictionary = raw_tile
+			if bool(tile.get("render", true)):
+				tiles.append(tile)
+	return tiles
+
+
 func visible_tile_snapshot() -> Dictionary:
 	var tiles := visible_tiles()
+	return {
+		"tiles": tiles,
+		"rect": _bounds_for_tiles(tiles),
+	}
+
+
+func explored_tile_snapshot() -> Dictionary:
+	var tiles := explored_tiles()
 	return {
 		"tiles": tiles,
 		"rect": _bounds_for_tiles(tiles),

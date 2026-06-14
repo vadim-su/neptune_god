@@ -20,11 +20,11 @@ const HOTBAR_SELECTOR_OWNER_PREFIX := "hotbar:"
 @onready var environment: Node3D = $Environment
 
 const CAMERA_MIN_DISTANCE := 10.0
-const CAMERA_MAX_DISTANCE := 140.0
+const CAMERA_MAX_DISTANCE := 96.0
 const CAMERA_TARGET_HEIGHT := 0.75
 const CAMERA_GENERATION_MARGIN_TILES := 16
 const CAMERA_FOOTPRINT_FALLBACK_RADIUS := 48
-const CAMERA_MAX_VISIBLE_TILE_RADIUS := 128
+const CAMERA_MAX_VISIBLE_TILE_RADIUS := 64
 const CAMERA_MIN_ELEVATION := deg_to_rad(30.0)
 const CAMERA_MAX_ELEVATION := deg_to_rad(76.0)
 const CAMERA_FAR_PADDING := 32.0
@@ -189,6 +189,14 @@ func _input(event: InputEvent) -> void:
 				map_overlay.zoom_by(0.80)
 				_update_camera()
 				get_viewport().set_input_as_handled()
+		elif event is InputEventMouseMotion:
+			if map_overlay.has_method("handle_fullscreen_mouse_motion"):
+				map_overlay.handle_fullscreen_mouse_motion(event)
+				if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+					_update_camera()
+			else:
+				_refresh_map_overlay_resource_selection()
+			get_viewport().set_input_as_handled()
 		else:
 			get_viewport().set_input_as_handled()
 		return
@@ -276,7 +284,10 @@ func _update_camera() -> void:
 		camera.look_at(target, Vector3.UP)
 		return
 
-	var detailed_target := Vector3(player.global_position.x, 0.0, player.global_position.z)
+	var detailed_center := Vector2(player.global_position.x, player.global_position.z)
+	if map_overlay != null and map_overlay.has_method("map_center"):
+		detailed_center = map_overlay.map_center()
+	var detailed_target := Vector3(detailed_center.x, 0.0, detailed_center.y)
 	var viewport_height := get_viewport().get_visible_rect().size.y
 	var height: float = _detailed_map_camera_height(
 		map_overlay.pixels_per_tile(),
@@ -355,13 +366,25 @@ func _update_map_overlays(force_snapshot: bool = false) -> void:
 	if not force_snapshot and not map_snapshot_dirty:
 		_update_map_overlay_player_position()
 		return
+	var map_snapshot: Dictionary = environment.explored_tile_snapshot()
 	var visible_snapshot: Dictionary = environment.visible_tile_snapshot()
-	var tiles: Array = visible_snapshot["tiles"]
-	var tile_rect: Rect2i = visible_snapshot["rect"]
 	var buildings: Array = sim.buildings()
-	minimap.set_world_snapshot(tiles, buildings, tile_rect, player.global_position)
-	map_overlay.set_world_snapshot(tiles, buildings, tile_rect, player.global_position)
+	_apply_map_overlay_snapshots(map_snapshot, visible_snapshot, buildings, player.global_position)
 	map_snapshot_dirty = false
+
+
+func _apply_map_overlay_snapshots(
+	map_snapshot: Dictionary,
+	visible_snapshot: Dictionary,
+	buildings: Array,
+	player_position: Vector3
+) -> void:
+	var tiles: Array = map_snapshot["tiles"]
+	var tile_rect: Rect2i = map_snapshot["rect"]
+	var visible_tiles: Array = visible_snapshot["tiles"]
+	var current_visible_rect: Rect2i = visible_snapshot["rect"]
+	minimap.set_world_snapshot(visible_tiles, buildings, current_visible_rect, player_position, current_visible_rect)
+	map_overlay.set_world_snapshot(tiles, buildings, tile_rect, player_position, current_visible_rect)
 
 
 func _update_map_overlay_player_position() -> void:
@@ -370,6 +393,11 @@ func _update_map_overlay_player_position() -> void:
 	minimap.visible = not map_overlay.is_fullscreen_open()
 	minimap.set_player_position(player.global_position)
 	map_overlay.set_player_position(player.global_position)
+
+
+func _refresh_map_overlay_resource_selection() -> void:
+	if map_overlay != null and map_overlay.has_method("refresh_resource_selection"):
+		map_overlay.refresh_resource_selection()
 
 
 func _mark_map_snapshot_dirty() -> void:
@@ -483,7 +511,14 @@ func _create_player_zone_overlay() -> void:
 func _update_player_zone_overlay() -> void:
 	if player_zone_overlay == null:
 		return
+	player_zone_overlay.visible = _should_show_player_zone_overlay()
+	if not player_zone_overlay.visible:
+		return
 	player_zone_overlay.global_position = Vector3(player.global_position.x, PLAYER_ZONE_Y, player.global_position.z)
+
+
+func _should_show_player_zone_overlay() -> bool:
+	return map_overlay == null or not map_overlay.is_fullscreen_open()
 
 
 func _player_zone_mesh() -> ArrayMesh:

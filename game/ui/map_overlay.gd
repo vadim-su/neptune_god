@@ -10,7 +10,9 @@ const MIN_PIXELS_PER_TILE := 1.0
 const MAX_PIXELS_PER_TILE := 48.0
 const MINIMAP_SIZE := Vector2(160.0, 160.0)
 const MINIMAP_MARGIN := 16.0
-const MAP_TEXTURE_BACKGROUND := Color(0.035, 0.055, 0.045, 1.0)
+const MAP_TEXTURE_BACKGROUND := Color(0.0, 0.0, 0.0, 0.0)
+const MAP_BACKGROUND_COLOR := Color(0.028, 0.038, 0.034, 1.0)
+const FOGGED_TILE_BLEND := 0.58
 
 const TERRAIN_COLORS := {
 	"ground": Color(0.16, 0.23, 0.17, 1.0),
@@ -45,13 +47,16 @@ var _fullscreen_open := false
 var _tiles: Array = []
 var _buildings: Array = []
 var _visible_rect := Rect2i(Vector2i.ZERO, Vector2i.ONE)
+var _current_visible_rect := Rect2i(Vector2i.ZERO, Vector2i.ONE)
 var _player_position := Vector3.ZERO
 var _pixels_per_tile := 4.0
 var _map_center := Vector2.ZERO
 var _center_initialized := false
+var _follow_player_in_fullscreen := true
 var _schematic_texture: ImageTexture
 var _schematic_texture_bounds := Rect2i()
 var _schematic_texture_dirty := true
+var _resource_selection_revision := 0
 
 
 static func collect_resource_vein(start: Vector2i, tiles: Array, visible_rect: Rect2i) -> Dictionary:
@@ -170,11 +175,21 @@ func is_fullscreen_open() -> bool:
 	return not _is_minimap and _fullscreen_open
 
 
-func set_world_snapshot(tiles: Array, buildings: Array, visible_rect: Rect2i, player_position: Vector3) -> void:
+func set_world_snapshot(
+	tiles: Array,
+	buildings: Array,
+	visible_rect: Rect2i,
+	player_position: Vector3,
+	current_visible_rect: Rect2i = Rect2i()
+) -> void:
 	_tiles = tiles.duplicate(true)
 	_buildings = buildings.duplicate(true)
 	if visible_rect.size.x > 0 and visible_rect.size.y > 0:
 		_visible_rect = visible_rect
+	if current_visible_rect.size.x > 0 and current_visible_rect.size.y > 0:
+		_current_visible_rect = current_visible_rect
+	else:
+		_current_visible_rect = _visible_rect
 	_schematic_texture_dirty = true
 	set_player_position(player_position)
 	queue_redraw()
@@ -183,26 +198,41 @@ func set_world_snapshot(tiles: Array, buildings: Array, visible_rect: Rect2i, pl
 func set_player_position(position: Vector3) -> void:
 	if _center_initialized and _player_position == position:
 		return
+	var previous_tile := _player_marker_tile()
 	_player_position = position
 	if not _center_initialized:
 		center_on_player()
-	elif is_fullscreen_open():
+		return
+	elif is_fullscreen_open() and _follow_player_in_fullscreen:
 		_map_center = Vector2(_player_position.x, _player_position.z)
-	if visible:
+	if visible and _player_marker_tile() != previous_tile:
 		queue_redraw()
 
 
 func center_on_player() -> void:
 	_map_center = Vector2(_player_position.x, _player_position.z)
 	_center_initialized = true
+	_follow_player_in_fullscreen = true
 	queue_redraw()
 
 
 func player_marker_snapshot() -> Dictionary:
 	return {
-		"tile": Vector2i(int(round(_player_position.x)), int(round(_player_position.z))),
+		"tile": _player_marker_tile(),
 		"label": "player",
 	}
+
+
+func _player_marker_tile() -> Vector2i:
+	return Vector2i(int(round(_player_position.x)), int(round(_player_position.z)))
+
+
+func map_center_for_tests() -> Vector2:
+	return _map_center
+
+
+func map_center() -> Vector2:
+	return _map_center
 
 
 func set_pixels_per_tile(value: float) -> void:
@@ -216,6 +246,22 @@ func pixels_per_tile() -> float:
 
 func zoom_by(factor: float) -> void:
 	set_pixels_per_tile(_pixels_per_tile * factor)
+
+
+func drag_by(screen_delta: Vector2) -> void:
+	if not is_fullscreen_open() or screen_delta == Vector2.ZERO:
+		return
+	var center_delta := Vector2(
+		screen_delta.x / maxf(_pixels_per_tile, 1.0),
+		screen_delta.y / maxf(_pixels_per_tile, 1.0)
+	)
+	if not _mirror_chart_x():
+		center_delta.x = -center_delta.x
+	if not _mirror_chart_y():
+		center_delta.y = -center_delta.y
+	_map_center += center_delta
+	_follow_player_in_fullscreen = false
+	queue_redraw()
 
 
 func detailed_world_blend() -> float:
@@ -237,10 +283,40 @@ func should_draw_chart_layer() -> bool:
 	return chart_layer_alpha() > 0.0
 
 
+func map_background_alpha() -> float:
+	return 1.0 if visible else 0.0
+
+
 func chart_layer_alpha() -> float:
 	if not visible:
 		return 0.0
-	return 1.0 - detailed_world_blend()
+	return 1.0
+
+
+func should_draw_map_markers() -> bool:
+	return visible and not detailed_world_visible()
+
+
+func refresh_resource_selection() -> void:
+	_resource_selection_revision += 1
+	if visible:
+		queue_redraw()
+
+
+func resource_selection_revision_for_tests() -> int:
+	return _resource_selection_revision
+
+
+func tile_uses_detailed_world_for_tests(tile: Vector2i) -> bool:
+	return _tile_uses_detailed_world(tile)
+
+
+func tile_region_local_rect_for_tests(tile_bounds: Rect2i, target_bounds: Rect2i, tile_scale: float) -> Rect2:
+	return _tile_region_local_rect(tile_bounds, target_bounds, tile_scale)
+
+
+func background_regions_for_tests(bounds: Rect2i) -> Array[Rect2i]:
+	return _map_background_regions(bounds)
 
 
 func schematic_image_for_tests(bounds: Rect2i) -> Image:
@@ -262,15 +338,16 @@ func _draw() -> void:
 	var bounds := _current_bounds()
 	var tile_scale := _tile_scale(bounds)
 	var chart_alpha := chart_layer_alpha()
-	if chart_alpha > 0.0:
-		var map_alpha := 0.86 if _is_minimap else 0.88
-		draw_rect(Rect2(Vector2.ZERO, size), Color(0.035, 0.055, 0.045, map_alpha * chart_alpha), true)
+	var background_alpha := map_background_alpha()
+	if background_alpha > 0.0:
+		_draw_map_background(bounds, tile_scale, background_alpha)
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.45, 0.58, 0.48, 0.80), false, 1.0)
 
 	if chart_alpha > 0.0:
 		_draw_schematic_texture(bounds, tile_scale, chart_alpha)
-	_draw_player_marker(bounds, tile_scale)
-	if is_fullscreen_open():
+	if should_draw_map_markers():
+		_draw_player_marker(bounds, tile_scale)
+	if is_fullscreen_open() and should_draw_map_markers():
 		_draw_hovered_resource_vein(bounds, tile_scale)
 
 
@@ -293,25 +370,66 @@ func _tile_scale(bounds: Rect2i) -> float:
 	return minf(size.x / float(maxi(bounds.size.x, 1)), size.y / float(maxi(bounds.size.y, 1)))
 
 
+func _draw_map_background(bounds: Rect2i, tile_scale: float, alpha: float) -> void:
+	var color := MAP_BACKGROUND_COLOR
+	color.a *= alpha
+	for region: Rect2i in _map_background_regions(bounds):
+		draw_rect(
+			_tile_region_local_rect(region, bounds, tile_scale),
+			color,
+			true
+		)
+
+
+func _map_background_regions(bounds: Rect2i) -> Array[Rect2i]:
+	if detailed_world_visible():
+		return []
+	return [bounds]
+
+
 func _draw_schematic_texture(bounds: Rect2i, tile_scale: float, alpha: float) -> void:
 	var texture := _schematic_texture_for_bounds(bounds)
-	draw_texture_rect(
+	var visible_bounds := _rect_intersection(bounds, _schematic_texture_bounds)
+	if visible_bounds.size.x <= 0 or visible_bounds.size.y <= 0:
+		return
+	if detailed_world_visible():
+		for region: Rect2i in _tile_regions_outside_rect(
+			visible_bounds,
+			_rect_intersection(visible_bounds, _current_visible_rect)
+		):
+			_draw_schematic_texture_region(texture, region, bounds, tile_scale, alpha)
+		return
+	_draw_schematic_texture_region(texture, visible_bounds, bounds, tile_scale, alpha)
+
+
+func _draw_schematic_texture_region(
+	texture: Texture2D,
+	tile_bounds: Rect2i,
+	target_bounds: Rect2i,
+	tile_scale: float,
+	alpha: float
+) -> void:
+	if tile_bounds.size.x <= 0 or tile_bounds.size.y <= 0:
+		return
+	var source_rect := _tile_range_image_rect(tile_bounds, _schematic_texture_bounds)
+	draw_texture_rect_region(
 		texture,
-		Rect2(Vector2.ZERO, Vector2(float(bounds.size.x), float(bounds.size.y)) * tile_scale),
-		false,
+		_tile_region_local_rect(tile_bounds, target_bounds, tile_scale),
+		Rect2(source_rect),
 		Color(1.0, 1.0, 1.0, alpha)
 	)
 
 
 func _schematic_texture_for_bounds(bounds: Rect2i) -> ImageTexture:
+	var snapshot_bounds := _visible_rect
 	if (
 		not _schematic_texture_dirty
 		and _schematic_texture != null
-		and _schematic_texture_bounds.position == bounds.position
-		and _schematic_texture_bounds.size == bounds.size
+		and _schematic_texture_bounds.position == snapshot_bounds.position
+		and _schematic_texture_bounds.size == snapshot_bounds.size
 	):
 		return _schematic_texture
-	return _rebuild_schematic_texture(bounds)
+	return _rebuild_schematic_texture(snapshot_bounds)
 
 
 func _rebuild_schematic_texture(bounds: Rect2i) -> ImageTexture:
@@ -338,16 +456,21 @@ func _schematic_image(bounds: Rect2i) -> Image:
 		var resource_id := str(tile.get("resource", ""))
 		if not resource_id.is_empty() and int(tile.get("amount", 0)) > 0:
 			color = _resource_color(resource_id, color).lerp(Color.WHITE, 0.08)
+		if not _current_visible_rect.has_point(pos):
+			color = _fogged_color(color)
 		image.set_pixel(_tile_image_x(pos, bounds), _tile_image_y(pos, bounds), color)
 
 	for raw_building: Variant in _buildings:
 		var building: Dictionary = raw_building
 		var def_id := str(building.get("def_id", ""))
-		var color: Color = BUILDING_COLORS.get(def_id, _color_from_id(def_id))
+		var building_color: Color = BUILDING_COLORS.get(def_id, _color_from_id(def_id))
 		for raw_tile: Variant in building.get("footprint", []):
 			var tile: Dictionary = raw_tile
 			var pos := Vector2i(int(tile.get("x", 0)), int(tile.get("y", 0)))
 			if bounds.has_point(pos):
+				var color := building_color
+				if not _current_visible_rect.has_point(pos):
+					color = _fogged_color(color)
 				image.set_pixel(_tile_image_x(pos, bounds), _tile_image_y(pos, bounds), color)
 
 	return image
@@ -357,7 +480,7 @@ func _draw_player_marker(bounds: Rect2i, tile_scale: float) -> void:
 	var player_tile := Vector2i(int(round(_player_position.x)), int(round(_player_position.z)))
 	if not bounds.has_point(player_tile):
 		return
-	var center := _tile_to_local(player_tile, bounds, tile_scale) + Vector2(tile_scale, tile_scale) * 0.5
+	var center := _tile_to_local(player_tile, bounds, tile_scale, true) + Vector2(tile_scale, tile_scale) * 0.5
 	var radius: float = clampf(tile_scale * 0.46, 3.0, 7.0)
 	draw_circle(center, radius, Color(0.12, 0.92, 1.0, 1.0))
 	if is_fullscreen_open():
@@ -374,18 +497,18 @@ func _draw_player_marker(bounds: Rect2i, tile_scale: float) -> void:
 
 
 func _draw_hovered_resource_vein(bounds: Rect2i, tile_scale: float) -> void:
-	var hovered := _local_to_tile(get_local_mouse_position(), bounds, tile_scale)
+	var hovered := _local_to_tile(get_local_mouse_position(), bounds, tile_scale, true)
 	if not bounds.has_point(hovered):
 		return
-	var vein := collect_resource_vein(hovered, _tiles, _visible_rect)
+	var vein := collect_resource_vein(hovered, _tiles, _current_visible_rect)
 	if vein.is_empty():
 		return
 	var color := Color(0.50, 0.95, 1.0, 0.92)
 	if detailed_world_blend() < 1.0:
 		for raw_tile: Variant in vein["tiles"]:
-			var tile: Vector2i = raw_tile
-			if bounds.has_point(tile):
-				draw_rect(Rect2(_tile_to_local(tile, bounds, tile_scale), Vector2(tile_scale, tile_scale)), color, false, 2.0)
+				var tile: Vector2i = raw_tile
+				if bounds.has_point(tile):
+					draw_rect(Rect2(_tile_to_local(tile, bounds, tile_scale, true), Vector2(tile_scale, tile_scale)), color, false, 2.0)
 	var font := get_theme_default_font()
 	var label := "%s: %d" % [_resource_label(str(vein["resource"])), int(vein["amount"])]
 	draw_string(
@@ -399,19 +522,28 @@ func _draw_hovered_resource_vein(bounds: Rect2i, tile_scale: float) -> void:
 	)
 
 
-func _tile_to_local(tile: Vector2i, bounds: Rect2i, tile_scale: float) -> Vector2:
-	return Vector2(
+func _tile_to_local(tile: Vector2i, bounds: Rect2i, tile_scale: float, use_viewport_offset := false) -> Vector2:
+	var local := Vector2(
 		float(_tile_image_x(tile, bounds)) * tile_scale,
-		float(bounds.position.y + bounds.size.y - 1 - tile.y) * tile_scale
+		float(_tile_image_y(tile, bounds)) * tile_scale
 	)
+	if use_viewport_offset:
+		local += _viewport_pixel_offset(bounds, tile_scale)
+	return local
 
 
-func _local_to_tile(local: Vector2, bounds: Rect2i, tile_scale: float) -> Vector2i:
-	var local_tile_x := int(floor(local.x / tile_scale))
+func _local_to_tile(local: Vector2, bounds: Rect2i, tile_scale: float, use_viewport_offset := false) -> Vector2i:
+	var adjusted_local := local
+	if use_viewport_offset:
+		adjusted_local -= _viewport_pixel_offset(bounds, tile_scale)
+	var local_tile_x := int(floor(adjusted_local.x / tile_scale))
 	var tile_x := bounds.position.x + local_tile_x
 	if _mirror_chart_x():
 		tile_x = bounds.position.x + bounds.size.x - 1 - local_tile_x
-	var tile_y := bounds.position.y + bounds.size.y - 1 - int(floor(local.y / tile_scale))
+	var local_tile_y := int(floor(adjusted_local.y / tile_scale))
+	var tile_y := bounds.position.y + local_tile_y
+	if _mirror_chart_y():
+		tile_y = bounds.position.y + bounds.size.y - 1 - local_tile_y
 	return Vector2i(tile_x, tile_y)
 
 
@@ -422,10 +554,90 @@ func _tile_image_x(tile: Vector2i, bounds: Rect2i) -> int:
 
 
 func _tile_image_y(tile: Vector2i, bounds: Rect2i) -> int:
-	return bounds.position.y + bounds.size.y - 1 - tile.y
+	if _mirror_chart_y():
+		return bounds.position.y + bounds.size.y - 1 - tile.y
+	return tile.y - bounds.position.y
+
+
+func _rect_intersection(a: Rect2i, b: Rect2i) -> Rect2i:
+	var min_pos := Vector2i(maxi(a.position.x, b.position.x), maxi(a.position.y, b.position.y))
+	var a_end := a.position + a.size
+	var b_end := b.position + b.size
+	var max_pos := Vector2i(mini(a_end.x, b_end.x), mini(a_end.y, b_end.y))
+	return Rect2i(min_pos, Vector2i(maxi(max_pos.x - min_pos.x, 0), maxi(max_pos.y - min_pos.y, 0)))
+
+
+func _tile_range_image_rect(tile_bounds: Rect2i, image_bounds: Rect2i) -> Rect2i:
+	var first := tile_bounds.position
+	var last := tile_bounds.position + tile_bounds.size - Vector2i.ONE
+	var min_x := mini(_tile_image_x(first, image_bounds), _tile_image_x(last, image_bounds))
+	var min_y := mini(_tile_image_y(first, image_bounds), _tile_image_y(last, image_bounds))
+	return Rect2i(Vector2i(min_x, min_y), tile_bounds.size)
+
+
+func _tile_region_local_rect(tile_bounds: Rect2i, target_bounds: Rect2i, tile_scale: float) -> Rect2:
+	var target_rect := _tile_range_image_rect(tile_bounds, target_bounds)
+	return Rect2(
+		Vector2(target_rect.position) * tile_scale + _viewport_pixel_offset(target_bounds, tile_scale),
+		Vector2(target_rect.size) * tile_scale
+	)
+
+
+func _viewport_pixel_offset(bounds: Rect2i, tile_scale: float) -> Vector2:
+	if _is_minimap:
+		return Vector2.ZERO
+	var anchored_center := Vector2(bounds.position) + Vector2(bounds.size) * 0.5
+	var center_delta := _map_center - anchored_center
+	return Vector2(
+		center_delta.x * tile_scale if _mirror_chart_x() else -center_delta.x * tile_scale,
+		center_delta.y * tile_scale if _mirror_chart_y() else -center_delta.y * tile_scale
+	)
+
+
+func _tile_regions_outside_rect(outer: Rect2i, inner: Rect2i) -> Array[Rect2i]:
+	if outer.size.x <= 0 or outer.size.y <= 0:
+		return []
+	if inner.size.x <= 0 or inner.size.y <= 0:
+		return [outer]
+	var clipped_inner := _rect_intersection(outer, inner)
+	if clipped_inner.size.x <= 0 or clipped_inner.size.y <= 0:
+		return [outer]
+
+	var regions: Array[Rect2i] = []
+	var outer_end := outer.position + outer.size
+	var inner_end := clipped_inner.position + clipped_inner.size
+	if clipped_inner.position.y > outer.position.y:
+		regions.append(Rect2i(
+			outer.position,
+			Vector2i(outer.size.x, clipped_inner.position.y - outer.position.y)
+		))
+	if inner_end.y < outer_end.y:
+		regions.append(Rect2i(
+			Vector2i(outer.position.x, inner_end.y),
+			Vector2i(outer.size.x, outer_end.y - inner_end.y)
+		))
+	if clipped_inner.position.x > outer.position.x:
+		regions.append(Rect2i(
+			Vector2i(outer.position.x, clipped_inner.position.y),
+			Vector2i(clipped_inner.position.x - outer.position.x, clipped_inner.size.y)
+		))
+	if inner_end.x < outer_end.x:
+		regions.append(Rect2i(
+			Vector2i(inner_end.x, clipped_inner.position.y),
+			Vector2i(outer_end.x - inner_end.x, clipped_inner.size.y)
+		))
+	return regions
+
+
+func _tile_uses_detailed_world(tile: Vector2i) -> bool:
+	return detailed_world_visible() and _current_visible_rect.has_point(tile)
 
 
 func _mirror_chart_x() -> bool:
+	return not _is_minimap
+
+
+func _mirror_chart_y() -> bool:
 	return not _is_minimap
 
 
@@ -435,6 +647,10 @@ func _color_from_id(id: String) -> Color:
 	var g := 0.30 + float((hash_value >> 8) & 0x3f) / 160.0
 	var b := 0.30 + float((hash_value >> 16) & 0x3f) / 160.0
 	return Color(r, g, b, 1.0)
+
+
+func _fogged_color(color: Color) -> Color:
+	return color.darkened(FOGGED_TILE_BLEND).lerp(MAP_BACKGROUND_COLOR, 0.28)
 
 
 func _resource_color(resource_id: String, terrain_color: Color) -> Color:
@@ -454,7 +670,7 @@ func _gui_input(event: InputEvent) -> void:
 	if not is_fullscreen_open():
 		return
 	if event is InputEventMouseMotion:
-		queue_redraw()
+		handle_fullscreen_mouse_motion(event)
 	elif event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			zoom_by(1.25)
@@ -462,3 +678,13 @@ func _gui_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			zoom_by(0.80)
 			accept_event()
+
+
+func handle_fullscreen_mouse_motion(event: InputEventMouseMotion) -> void:
+	if not is_fullscreen_open():
+		return
+	if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+		drag_by(event.relative)
+	else:
+		refresh_resource_selection()
+	accept_event()

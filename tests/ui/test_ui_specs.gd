@@ -6,6 +6,7 @@ const CatalogSelectorScript := preload("res://game/ui/catalog_selector.gd")
 const HotbarScript := preload("res://game/ui/hotbar.gd")
 const InventorySlotScript := preload("res://game/ui/inventory_slot.gd")
 const MapOverlayScript := preload("res://game/ui/map_overlay.gd")
+const MainScript := preload("res://game/main/main.gd")
 
 const GROUP_CATEGORY := 0
 const GROUP_USAGE := 1
@@ -224,22 +225,151 @@ func test_map_overlay_fullscreen_contract_has_player_dot_label_and_detailed_zoom
 	assert_true(overlay.detailed_world_visible())
 
 
-func test_map_overlay_fades_chart_layer_across_detailed_top_down_transition() -> void:
+func test_map_overlay_keeps_opaque_map_background_through_detailed_view() -> void:
 	var overlay = autofree(MapOverlayScript.new())
 	overlay.configure_fullscreen()
 	overlay.set_fullscreen_open(true)
 	var half_transition: float = overlay.DETAILED_WORLD_TRANSITION_PIXELS * 0.5
 
 	overlay.set_pixels_per_tile(overlay.DETAILED_WORLD_PIXELS_PER_TILE - half_transition)
+	assert_eq(overlay.map_background_alpha(), 1.0)
 	assert_eq(overlay.chart_layer_alpha(), 1.0)
 	assert_true(overlay.should_draw_chart_layer())
 	overlay.set_pixels_per_tile(overlay.DETAILED_WORLD_PIXELS_PER_TILE)
-	assert_gt(overlay.chart_layer_alpha(), 0.0)
-	assert_lt(overlay.chart_layer_alpha(), 1.0)
+	assert_eq(overlay.map_background_alpha(), 1.0)
+	assert_eq(overlay.chart_layer_alpha(), 1.0)
 	assert_true(overlay.should_draw_chart_layer())
 	overlay.set_pixels_per_tile(overlay.DETAILED_WORLD_PIXELS_PER_TILE + half_transition)
-	assert_eq(overlay.chart_layer_alpha(), 0.0)
-	assert_false(overlay.should_draw_chart_layer())
+	assert_eq(overlay.map_background_alpha(), 1.0)
+	assert_eq(overlay.chart_layer_alpha(), 1.0)
+	assert_true(overlay.should_draw_chart_layer())
+
+
+func test_map_overlay_does_not_draw_rectangular_background_frame_in_detailed_view() -> void:
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	overlay.anchor_left = 0.0
+	overlay.anchor_top = 0.0
+	overlay.anchor_right = 0.0
+	overlay.anchor_bottom = 0.0
+	overlay.size = Vector2(100.0, 100.0)
+	overlay.set_fullscreen_open(true)
+	overlay.set_pixels_per_tile(overlay.DETAILED_WORLD_PIXELS_PER_TILE + overlay.DETAILED_WORLD_TRANSITION_PIXELS)
+
+	assert_true(overlay.detailed_world_visible())
+	assert_eq(overlay.background_regions_for_tests(overlay._current_bounds()).size(), 0)
+
+
+func test_map_overlay_hides_map_markers_in_detailed_view() -> void:
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	overlay.set_fullscreen_open(true)
+	var half_transition: float = overlay.DETAILED_WORLD_TRANSITION_PIXELS * 0.5
+
+	overlay.set_pixels_per_tile(overlay.DETAILED_WORLD_PIXELS_PER_TILE)
+	assert_true(overlay.should_draw_map_markers())
+	overlay.set_pixels_per_tile(overlay.DETAILED_WORLD_PIXELS_PER_TILE + half_transition)
+	assert_true(overlay.detailed_world_visible())
+	assert_false(overlay.should_draw_map_markers())
+
+
+func test_map_overlay_resource_selection_refreshes_on_mouse_motion_contract() -> void:
+	var main = autofree(MainScript.new())
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	overlay.set_fullscreen_open(true)
+	main.map_overlay = overlay
+
+	var before: int = overlay.resource_selection_revision_for_tests()
+	main._refresh_map_overlay_resource_selection()
+
+	assert_eq(overlay.resource_selection_revision_for_tests(), before + 1)
+
+
+func test_main_sends_only_current_visible_snapshot_to_minimap() -> void:
+	var main = autofree(MainScript.new())
+	var minimap_overlay = autofree(MapOverlayScript.new())
+	minimap_overlay.configure_minimap()
+	var fullscreen_overlay = autofree(MapOverlayScript.new())
+	fullscreen_overlay.configure_fullscreen()
+	main.minimap = minimap_overlay
+	main.map_overlay = fullscreen_overlay
+	var explored_snapshot := {
+		"tiles": [
+			{"x": 0, "y": 0, "terrain": "ground", "resource": "", "amount": 0, "render": true},
+			{"x": 1, "y": 0, "terrain": "stone", "resource": "", "amount": 0, "render": true},
+		],
+		"rect": Rect2i(Vector2i.ZERO, Vector2i(2, 1)),
+	}
+	var visible_snapshot := {
+		"tiles": [
+			{"x": 1, "y": 0, "terrain": "stone", "resource": "", "amount": 0, "render": true},
+		],
+		"rect": Rect2i(Vector2i(1, 0), Vector2i.ONE),
+	}
+
+	main._apply_map_overlay_snapshots(explored_snapshot, visible_snapshot, [], Vector3.ZERO)
+
+	assert_eq(minimap_overlay._current_bounds(), Rect2i(Vector2i(1, 0), Vector2i.ONE))
+	assert_eq(fullscreen_overlay.schematic_image_for_tests(Rect2i(Vector2i.ZERO, Vector2i(2, 1))).get_size(), Vector2i(2, 1))
+
+
+func test_fullscreen_map_left_mouse_drag_pans_without_following_player() -> void:
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	overlay.anchor_left = 0.0
+	overlay.anchor_top = 0.0
+	overlay.anchor_right = 0.0
+	overlay.anchor_bottom = 0.0
+	overlay.size = Vector2(100.0, 100.0)
+	overlay.set_pixels_per_tile(10.0)
+	overlay.set_player_position(Vector3(10.0, 0.0, 20.0))
+	overlay.set_fullscreen_open(true)
+
+	overlay.drag_by(Vector2(20.0, 10.0))
+	var dragged_center: Vector2 = overlay.map_center_for_tests()
+	overlay.set_player_position(Vector3(30.0, 0.0, 40.0))
+
+	assert_eq(dragged_center, Vector2(12.0, 21.0))
+	assert_eq(overlay.map_center_for_tests(), dragged_center)
+	overlay.center_on_player()
+	assert_eq(overlay.map_center_for_tests(), Vector2(30.0, 40.0))
+
+
+func test_fullscreen_map_drag_applies_fractional_texture_offset_before_bounds_change() -> void:
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	overlay.anchor_left = 0.0
+	overlay.anchor_top = 0.0
+	overlay.anchor_right = 0.0
+	overlay.anchor_bottom = 0.0
+	overlay.size = Vector2(100.0, 100.0)
+	overlay.set_pixels_per_tile(10.0)
+	overlay.set_player_position(Vector3.ZERO)
+	overlay.set_fullscreen_open(true)
+	var bounds: Rect2i = overlay._current_bounds()
+	var before_rect: Rect2 = overlay.tile_region_local_rect_for_tests(bounds, bounds, 10.0)
+
+	overlay.drag_by(Vector2(4.0, 0.0))
+	var after_bounds: Rect2i = overlay._current_bounds()
+	var after_rect: Rect2 = overlay.tile_region_local_rect_for_tests(bounds, after_bounds, 10.0)
+
+	assert_eq(after_bounds, bounds)
+	assert_eq(after_rect.position.x, before_rect.position.x + 4.0)
+	assert_eq(after_rect.position.y, before_rect.position.y)
+
+
+func test_player_zone_overlay_hides_while_fullscreen_map_is_open() -> void:
+	var main = autofree(MainScript.new())
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	main.map_overlay = overlay
+
+	assert_true(main._should_show_player_zone_overlay())
+	overlay.set_fullscreen_open(true)
+	assert_false(main._should_show_player_zone_overlay())
+	overlay.set_fullscreen_open(false)
+	assert_true(main._should_show_player_zone_overlay())
 
 
 func test_fullscreen_map_tracks_player_center_for_detailed_camera_alignment() -> void:
@@ -313,16 +443,73 @@ func test_fullscreen_map_schematic_mirrors_x_to_match_top_down_camera() -> void:
 	))
 
 
-func test_map_overlay_schematic_texture_has_opaque_background() -> void:
+func test_minimap_schematic_does_not_flip_vertical_axis() -> void:
+	var bounds := Rect2i(Vector2i(0, -1), Vector2i(1, 3))
+	var tiles := [
+		{"x": 0, "y": -1, "terrain": "ground", "resource": "copper_ore", "amount": 1, "render": true},
+		{"x": 0, "y": 1, "terrain": "ground", "resource": "iron_ore", "amount": 1, "render": true},
+	]
+	var fullscreen_overlay = autofree(MapOverlayScript.new())
+	fullscreen_overlay.configure_fullscreen()
+	fullscreen_overlay.set_world_snapshot(tiles, [], bounds, Vector3.ZERO)
+	var minimap_overlay = autofree(MapOverlayScript.new())
+	minimap_overlay.configure_minimap()
+	minimap_overlay.set_world_snapshot(tiles, [], bounds, Vector3.ZERO)
+
+	var fullscreen_image: Image = fullscreen_overlay.schematic_image_for_tests(bounds)
+	var minimap_image: Image = minimap_overlay.schematic_image_for_tests(bounds)
+
+	assert_eq(fullscreen_overlay._tile_to_local(Vector2i(0, 1), bounds, 10.0), Vector2.ZERO)
+	assert_eq(fullscreen_overlay._local_to_tile(Vector2(5.0, 5.0), bounds, 10.0), Vector2i(0, 1))
+	assert_eq(minimap_overlay._tile_to_local(Vector2i(0, -1), bounds, 10.0), Vector2.ZERO)
+	assert_eq(minimap_overlay._local_to_tile(Vector2(5.0, 5.0), bounds, 10.0), Vector2i(0, -1))
+	assert_true(_color_almost_eq(
+		fullscreen_image.get_pixel(0, 0),
+		fullscreen_overlay.resource_color_for_tests("iron_ore", Color.BLACK).lerp(Color.WHITE, 0.08),
+		0.004
+	))
+	assert_true(_color_almost_eq(
+		minimap_image.get_pixel(0, 0),
+		minimap_overlay.resource_color_for_tests("copper_ore", Color.BLACK).lerp(Color.WHITE, 0.08),
+		0.004
+	))
+
+
+func test_map_overlay_schematic_texture_leaves_unexplored_tiles_transparent() -> void:
 	var overlay = autofree(MapOverlayScript.new())
 	overlay.configure_fullscreen()
-	overlay.set_world_snapshot([], [], Rect2i(Vector2i(-1, -1), Vector2i(3, 3)), Vector3.ZERO)
+	var bounds := Rect2i(Vector2i.ZERO, Vector2i(2, 1))
+	overlay.set_world_snapshot([
+		{"x": 1, "y": 0, "terrain": "ground", "resource": "", "amount": 0, "render": true},
+	], [], bounds, Vector3.ZERO)
 
-	var image: Image = overlay.schematic_image_for_tests(Rect2i(Vector2i(-1, -1), Vector2i(3, 3)))
-	var background := image.get_pixel(0, 0)
+	var image: Image = overlay.schematic_image_for_tests(bounds)
+	var explored := image.get_pixel(0, 0)
+	var unexplored := image.get_pixel(1, 0)
 
-	assert_gt(background.a, 0.99)
-	assert_ne(background, Color.WHITE)
+	assert_eq(unexplored.a, 0.0)
+	assert_gt(explored.a, 0.99)
+
+
+func test_map_overlay_fades_explored_tiles_outside_current_visible_rect() -> void:
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	var bounds := Rect2i(Vector2i.ZERO, Vector2i(2, 1))
+	var visible_rect := Rect2i(Vector2i.ZERO, Vector2i.ONE)
+	overlay.set_world_snapshot([
+		{"x": 0, "y": 0, "terrain": "ground", "resource": "copper_ore", "amount": 1, "render": true},
+		{"x": 1, "y": 0, "terrain": "ground", "resource": "copper_ore", "amount": 1, "render": true},
+	], [], bounds, Vector3.ZERO, visible_rect)
+	overlay.set_fullscreen_open(true)
+	overlay.set_pixels_per_tile(overlay.DETAILED_WORLD_PIXELS_PER_TILE + overlay.DETAILED_WORLD_TRANSITION_PIXELS)
+
+	var image: Image = overlay.schematic_image_for_tests(bounds)
+	var visible_color := image.get_pixel(1, 0)
+	var fogged_color := image.get_pixel(0, 0)
+
+	assert_gt(_color_luminance(visible_color), _color_luminance(fogged_color))
+	assert_true(overlay.tile_uses_detailed_world_for_tests(Vector2i(0, 0)))
+	assert_false(overlay.tile_uses_detailed_world_for_tests(Vector2i(1, 0)))
 
 
 func test_map_overlay_retains_schematic_texture_after_rebuild() -> void:
@@ -340,12 +527,13 @@ func test_map_overlay_retains_schematic_texture_after_rebuild() -> void:
 	assert_eq(texture.get_height(), 1)
 
 
-func test_map_overlay_reuses_schematic_texture_until_bounds_or_snapshot_change() -> void:
+func test_map_overlay_reuses_schematic_texture_across_zoom_bounds_until_snapshot_changes() -> void:
 	var overlay = autofree(MapOverlayScript.new())
 	overlay.configure_fullscreen()
-	var bounds := Rect2i(Vector2i.ZERO, Vector2i.ONE)
+	var bounds := Rect2i(Vector2i.ZERO, Vector2i(4, 4))
 	overlay.set_world_snapshot([
 		{"x": 0, "y": 0, "terrain": "ground", "resource": "", "amount": 0, "render": true},
+		{"x": 3, "y": 3, "terrain": "stone", "resource": "", "amount": 0, "render": true},
 	], [], bounds, Vector3.ZERO)
 
 	var first_texture: ImageTexture = overlay.schematic_texture_for_tests(bounds)
@@ -356,9 +544,9 @@ func test_map_overlay_reuses_schematic_texture_until_bounds_or_snapshot_change()
 	assert_same(first_texture, same_texture)
 	assert_same(first_texture, moved_player_texture)
 
-	var shifted_bounds := Rect2i(Vector2i(1, 0), Vector2i.ONE)
-	var shifted_texture: ImageTexture = overlay.schematic_texture_for_tests(shifted_bounds)
-	assert_not_same(first_texture, shifted_texture)
+	var zoomed_bounds := Rect2i(Vector2i(1, 1), Vector2i(2, 2))
+	var zoomed_texture: ImageTexture = overlay.schematic_texture_for_tests(zoomed_bounds)
+	assert_same(first_texture, zoomed_texture)
 
 	overlay.set_world_snapshot([
 		{"x": 0, "y": 0, "terrain": "stone", "resource": "", "amount": 0, "render": true},
@@ -391,3 +579,7 @@ func _color_almost_eq(left: Color, right: Color, tolerance: float) -> bool:
 		and absf(left.b - right.b) <= tolerance
 		and absf(left.a - right.a) <= tolerance
 	)
+
+
+func _color_luminance(color: Color) -> float:
+	return color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
