@@ -9,6 +9,7 @@ const MachineWindowScene := preload("res://game/ui/machine_window.tscn")
 const CatalogSelectorScene := preload("res://game/ui/catalog_selector.tscn")
 const InventoryWindowScene := preload("res://game/ui/inventory_window.tscn")
 const DevConsoleScene := preload("res://game/ui/dev_console.tscn")
+const MapOverlayScript := preload("res://game/ui/map_overlay.gd")
 const HOTBAR_SELECTOR_OWNER_PREFIX := "hotbar:"
 
 @onready var camera: Camera3D = %Camera3D
@@ -51,6 +52,8 @@ var machine_window: MachineWindow
 var catalog_selector: Node
 var inventory_window: Node
 var dev_console: Node
+var minimap: Control
+var map_overlay: Control
 var chunk_size := 32
 var visible_chunk_rect_valid := false
 var visible_chunk_rect := Rect2i()
@@ -96,6 +99,7 @@ func _ready() -> void:
 	$Hud.add_child(dev_console)
 	dev_console.command_submitted.connect(_on_dev_console_command_submitted)
 	dev_console.set_completions(_dev_console_completions())
+	_create_map_overlays()
 	catalog_selector = CatalogSelectorScene.instantiate()
 	$Hud.add_child(catalog_selector)
 	catalog_selector.entry_selected.connect(_on_catalog_selector_entry_selected)
@@ -103,6 +107,7 @@ func _ready() -> void:
 	sim.tick_many(3)
 	_update_status_label()
 	_update_camera()
+	_update_map_overlays()
 	initialized = true
 
 
@@ -131,6 +136,7 @@ func _process(_delta: float) -> void:
 	_sync_world_around_camera(false)
 	_update_player_zone_overlay()
 	_update_build_preview()
+	_update_map_overlays()
 
 
 func _physics_process(_delta: float) -> void:
@@ -160,6 +166,26 @@ func _input(event: InputEvent) -> void:
 			if event.keycode == KEY_ESCAPE or event.keycode == KEY_E:
 				inventory_window.hide_window()
 				get_viewport().set_input_as_handled()
+		return
+
+	if map_overlay != null and map_overlay.is_fullscreen_open():
+		if event is InputEventKey and event.pressed and not event.echo:
+			if event.keycode == KEY_ESCAPE or event.keycode == KEY_M:
+				map_overlay.set_fullscreen_open(false)
+				_update_map_overlays()
+				_update_camera()
+				get_viewport().set_input_as_handled()
+		elif event is InputEventMouseButton and event.pressed:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				map_overlay.zoom_by(1.25)
+				_update_camera()
+				get_viewport().set_input_as_handled()
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				map_overlay.zoom_by(0.80)
+				_update_camera()
+				get_viewport().set_input_as_handled()
+		else:
+			get_viewport().set_input_as_handled()
 		return
 
 	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
@@ -204,6 +230,9 @@ func _input(event: InputEvent) -> void:
 		elif event.keycode == KEY_E:
 			_toggle_inventory_window()
 			get_viewport().set_input_as_handled()
+		elif event.keycode == KEY_M:
+			_toggle_map_overlay()
+			get_viewport().set_input_as_handled()
 		elif event.keycode == KEY_R and build_mode == BuildMode.BUILD and not selected_building_id.is_empty():
 			build_quarter_turns = (build_quarter_turns + 1) % 4
 			_update_build_preview()
@@ -219,10 +248,15 @@ func _ui_blocks_gameplay_input() -> bool:
 		(dev_console != null and dev_console.is_open())
 		or (catalog_selector != null and catalog_selector.is_open())
 		or (inventory_window != null and inventory_window.is_open())
+		or (map_overlay != null and map_overlay.is_fullscreen_open())
 	)
 
 
 func _update_camera() -> void:
+	if map_overlay != null and map_overlay.detailed_world_visible():
+		_update_detailed_map_camera()
+		return
+
 	var target: Vector3 = player.global_position + Vector3.UP * CAMERA_TARGET_HEIGHT
 	var horizontal_distance := camera_distance * cos(camera_elevation)
 	var offset := Vector3(
@@ -234,20 +268,20 @@ func _update_camera() -> void:
 	camera.look_at(target, Vector3.UP)
 
 
-func _sync_world_around_camera(force: bool) -> void:
-	var tile_rect := _camera_ground_tile_rect()
-	var min_tile := tile_rect.position - Vector2i(CAMERA_GENERATION_MARGIN_TILES, CAMERA_GENERATION_MARGIN_TILES)
-	var max_tile := tile_rect.position + tile_rect.size - Vector2i.ONE + Vector2i(CAMERA_GENERATION_MARGIN_TILES, CAMERA_GENERATION_MARGIN_TILES)
-	var player_tile := _world_to_tile(player.global_position)
-	min_tile = Vector2i(mini(min_tile.x, player_tile.x), mini(min_tile.y, player_tile.y))
-	max_tile = Vector2i(maxi(max_tile.x, player_tile.x), maxi(max_tile.y, player_tile.y))
+func _update_detailed_map_camera() -> void:
+	var target := Vector3(player.global_position.x, 0.0, player.global_position.z)
+	var height: float = clamp(360.0 / maxf(map_overlay.pixels_per_tile(), 1.0), 18.0, 70.0)
+	camera.global_position = target + Vector3(0.0, height, 0.02)
+	camera.look_at(target, Vector3.FORWARD)
 
-	var min_chunk := _tile_to_chunk(min_tile)
-	var max_chunk := _tile_to_chunk(max_tile)
-	var chunk_rect := Rect2i(min_chunk, max_chunk - min_chunk + Vector2i.ONE)
+
+func _sync_world_around_camera(force: bool) -> void:
+	var chunk_rect := _visible_chunk_rect_for(_camera_ground_tile_rect(), player.global_position)
 	if not force and visible_chunk_rect_valid and visible_chunk_rect == chunk_rect:
 		return
 
+	var min_chunk := chunk_rect.position
+	var max_chunk := chunk_rect.position + chunk_rect.size - Vector2i.ONE
 	sim.ensure_generated_rect(
 		min_chunk.x * chunk_size,
 		min_chunk.y * chunk_size,
@@ -258,6 +292,54 @@ func _sync_world_around_camera(force: bool) -> void:
 	visible_chunk_rect = chunk_rect
 	visible_chunk_rect_valid = true
 	_update_status_label()
+	_update_map_overlays()
+
+
+func _create_map_overlays() -> void:
+	minimap = MapOverlayScript.new()
+	minimap.name = "Minimap"
+	minimap.configure_minimap()
+	$Hud.add_child(minimap)
+
+	map_overlay = MapOverlayScript.new()
+	map_overlay.name = "MapOverlay"
+	map_overlay.configure_fullscreen()
+	$Hud.add_child(map_overlay)
+
+
+func _toggle_map_overlay() -> void:
+	if map_overlay == null:
+		return
+	if map_overlay.is_fullscreen_open():
+		map_overlay.set_fullscreen_open(false)
+	else:
+		map_overlay.center_on_player()
+		map_overlay.set_fullscreen_open(true)
+	_update_map_overlays()
+	_update_camera()
+
+
+func _update_map_overlays() -> void:
+	if environment == null or minimap == null or map_overlay == null or sim == null or player == null:
+		return
+	var tiles: Array = environment.visible_tiles()
+	var tile_rect: Rect2i = environment.visible_tile_rect()
+	var buildings: Array = sim.buildings()
+	minimap.visible = not map_overlay.is_fullscreen_open()
+	minimap.set_world_snapshot(tiles, buildings, tile_rect, player.global_position)
+	map_overlay.set_world_snapshot(tiles, buildings, tile_rect, player.global_position)
+
+
+func _visible_chunk_rect_for(tile_rect: Rect2i, player_position: Vector3) -> Rect2i:
+	var min_tile := tile_rect.position - Vector2i(CAMERA_GENERATION_MARGIN_TILES, CAMERA_GENERATION_MARGIN_TILES)
+	var max_tile := tile_rect.position + tile_rect.size - Vector2i.ONE + Vector2i(CAMERA_GENERATION_MARGIN_TILES, CAMERA_GENERATION_MARGIN_TILES)
+	var player_tile := _world_to_tile(player_position)
+	min_tile = Vector2i(mini(min_tile.x, player_tile.x), mini(min_tile.y, player_tile.y))
+	max_tile = Vector2i(maxi(max_tile.x, player_tile.x), maxi(max_tile.y, player_tile.y))
+
+	var min_chunk := _tile_to_chunk(min_tile)
+	var max_chunk := _tile_to_chunk(max_tile)
+	return Rect2i(min_chunk, max_chunk - min_chunk + Vector2i.ONE)
 
 
 func _camera_ground_tile_rect() -> Rect2i:
@@ -619,6 +701,7 @@ func _try_place_selected_building() -> void:
 		_render_buildings_from_sim()
 		_update_build_preview()
 		_update_status_label()
+		_update_map_overlays()
 		get_viewport().set_input_as_handled()
 
 
@@ -655,6 +738,7 @@ func _try_remove_building_at_pointer() -> void:
 	_render_buildings_from_sim()
 	_update_build_preview()
 	_update_status_label()
+	_update_map_overlays()
 
 
 func _mouse_ground_tile() -> Variant:

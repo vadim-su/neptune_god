@@ -34,6 +34,8 @@ const CHUNK_BLEND_MARGIN := 1
 var _map_root: Node3D
 var _terrain_chunks := {}
 var _resource_chunks := {}
+var _tiles_by_chunk := {}
+var _visible_chunks := {}
 
 
 func build_from_sim(sim: NeptuneSim) -> void:
@@ -53,9 +55,15 @@ func clear_generated_map() -> void:
 	add_child(_map_root)
 	_terrain_chunks.clear()
 	_resource_chunks.clear()
+	_tiles_by_chunk.clear()
+	_visible_chunks.clear()
 
 
 func sync_chunks(sim: NeptuneSim, visible_chunks: Array) -> void:
+	_sync_chunks_with_tile_provider(sim, visible_chunks)
+
+
+func _sync_chunks_with_tile_provider(tile_provider: Variant, visible_chunks: Array) -> void:
 	if _map_root == null:
 		clear_generated_map()
 
@@ -64,10 +72,12 @@ func sync_chunks(sim: NeptuneSim, visible_chunks: Array) -> void:
 		var chunk: Vector2i = raw_chunk
 		visible_lookup[chunk] = true
 		if not _terrain_chunks.has(chunk):
-			var tiles: Array = sim.chunk_tiles_with_margin(chunk.x, chunk.y, CHUNK_BLEND_MARGIN)
+			var tiles: Array = tile_provider.chunk_tiles_with_margin(chunk.x, chunk.y, CHUNK_BLEND_MARGIN)
+			_tiles_by_chunk[chunk] = tiles
 			_terrain_chunks[chunk] = _add_terrain_chunk(chunk, tiles)
 			_resource_chunks[chunk] = _add_resource_chunk(chunk, tiles)
 
+	_visible_chunks = visible_lookup
 	for chunk: Vector2i in _terrain_chunks.keys():
 		var is_visible := visible_lookup.has(chunk)
 		var terrain_node := _terrain_chunks[chunk] as Node3D
@@ -75,6 +85,20 @@ func sync_chunks(sim: NeptuneSim, visible_chunks: Array) -> void:
 		if _resource_chunks.has(chunk):
 			var resource_node := _resource_chunks[chunk] as Node3D
 			resource_node.visible = is_visible
+
+
+func visible_tiles() -> Array:
+	var tiles: Array = []
+	for chunk: Vector2i in _visible_chunks.keys():
+		for raw_tile: Variant in _tiles_by_chunk.get(chunk, []):
+			var tile: Dictionary = raw_tile
+			if bool(tile.get("render", true)):
+				tiles.append(tile)
+	return tiles
+
+
+func visible_tile_rect() -> Rect2i:
+	return _bounds_for_tiles(visible_tiles())
 
 
 func _add_terrain_chunk(chunk: Vector2i, tiles: Array) -> MeshInstance3D:
