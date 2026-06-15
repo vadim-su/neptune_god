@@ -12,6 +12,7 @@ const MIN_PIXELS_PER_TILE := 1.0
 const MAX_PIXELS_PER_TILE := 48.0
 const MINIMAP_SIZE := Vector2(160.0, 160.0)
 const MINIMAP_MARGIN := 16.0
+const MINIMAP_VIEW_RADIUS_TILES := 64
 const MAX_CHUNK_SNAPSHOT_SYNCS_PER_FRAME := 4
 const MAX_MAP_TEXTURE_JOBS_STARTED_PER_FRAME := 1
 const MAX_ACTIVE_MAP_TEXTURE_TASKS := 1
@@ -407,6 +408,14 @@ func set_player_position(position: Vector3) -> void:
 	var previous_tile := _player_marker_tile()
 	var previous_bounds := _current_bounds()
 	_player_position = position
+	if _is_minimap:
+		_map_center = Vector2(_player_position.x, _player_position.z)
+		_center_initialized = true
+		if _current_bounds() != previous_bounds:
+			view_changed.emit()
+		if visible:
+			_request_redraw()
+		return
 	if not _center_initialized:
 		center_on_player()
 		return
@@ -665,7 +674,12 @@ func _draw() -> void:
 
 func _current_bounds() -> Rect2i:
 	if _is_minimap:
-		return _visible_rect
+		var minimap_center := Vector2i(int(round(_map_center.x)), int(round(_map_center.y)))
+		var minimap_size := Vector2i(MINIMAP_VIEW_RADIUS_TILES * 2, MINIMAP_VIEW_RADIUS_TILES * 2)
+		return Rect2i(
+			minimap_center - Vector2i(MINIMAP_VIEW_RADIUS_TILES, MINIMAP_VIEW_RADIUS_TILES),
+			minimap_size
+		)
 
 	var width_tiles := maxi(1, int(ceil(size.x / _pixels_per_tile)))
 	var height_tiles := maxi(1, int(ceil(size.y / _pixels_per_tile)))
@@ -1378,7 +1392,7 @@ func _draw_player_marker(bounds: Rect2i, tile_scale: float) -> void:
 	var player_tile := Vector2i(int(round(_player_position.x)), int(round(_player_position.z)))
 	if not bounds.has_point(player_tile):
 		return
-	var center := _tile_to_local(player_tile, bounds, tile_scale, true) + Vector2(tile_scale, tile_scale) * 0.5
+	var center := size * 0.5 if _is_minimap else _tile_to_local(player_tile, bounds, tile_scale, true) + Vector2(tile_scale, tile_scale) * 0.5
 	var radius := PLAYER_MARKER_RADIUS
 	draw_circle(center, radius, Color(0.12, 0.92, 1.0, 1.0))
 	if is_fullscreen_open():
@@ -1535,8 +1549,6 @@ func _tile_region_local_rect(tile_bounds: Rect2i, target_bounds: Rect2i, tile_sc
 
 
 func _viewport_pixel_offset(bounds: Rect2i, tile_scale: float) -> Vector2:
-	if _is_minimap:
-		return Vector2.ZERO
 	var anchored_center := Vector2(bounds.position) + Vector2(bounds.size) * 0.5
 	var center_delta := _map_center - anchored_center
 	return Vector2(

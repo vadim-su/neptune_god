@@ -2,6 +2,7 @@ extends Node
 class_name MapOverlayController
 
 const MapOverlayScript := preload("res://game/ui/map_overlay.gd")
+const MinimapScene := preload("res://game/ui/minimap.tscn")
 
 signal view_changed
 
@@ -331,7 +332,7 @@ func _ensure_overlays(_hud: Node = null) -> void:
 	if minimap == null:
 		minimap = get_node_or_null("Minimap") as Control
 	if minimap == null:
-		minimap = MapOverlayScript.new()
+		minimap = MinimapScene.instantiate()
 		minimap.name = "Minimap"
 		add_child(minimap)
 	minimap.configure_minimap()

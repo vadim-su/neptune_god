@@ -4,6 +4,7 @@ class_name InventorySlot
 signal transfer_requested(from_ref: Dictionary, to_ref: Dictionary, amount: int)
 signal action_requested(slot_ref: Dictionary, action: String)
 
+const ItemCatalogScript := preload("res://game/items/item_catalog.gd")
 const PREVIEW_BG := Color(0.070, 0.075, 0.065, 0.92)
 const PREVIEW_BORDER := Color(0.950, 0.840, 0.550, 0.95)
 
@@ -11,6 +12,12 @@ var slot_ref: Dictionary = {}
 var item_id := ""
 var amount := 0
 var preview_texture: Texture2D
+@onready var icon: TextureRect = get_node_or_null("Icon") as TextureRect
+@onready var amount_label: Label = get_node_or_null("AmountLabel") as Label
+
+
+func _ready() -> void:
+	_apply_view_state()
 
 
 func configure(ref: Dictionary, item: String, stack_amount: int, texture: Texture2D) -> void:
@@ -19,6 +26,7 @@ func configure(ref: Dictionary, item: String, stack_amount: int, texture: Textur
 	amount = stack_amount
 	preview_texture = texture
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	_apply_view_state()
 
 
 func _gui_input(event: InputEvent) -> void:
@@ -82,6 +90,21 @@ func _drag_preview() -> Control:
 		preview.add_child(icon)
 
 	return preview
+
+
+func _apply_view_state() -> void:
+	if icon == null:
+		icon = get_node_or_null("Icon") as TextureRect
+	if amount_label == null:
+		amount_label = get_node_or_null("AmountLabel") as Label
+
+	if icon != null:
+		icon.texture = preview_texture
+		icon.visible = not item_id.is_empty()
+		icon.tooltip_text = ItemCatalogScript.display_name(item_id) if not item_id.is_empty() else ""
+	if amount_label != null:
+		amount_label.text = str(amount) if amount > 1 else ""
+		amount_label.visible = amount > 1
 
 
 func _same_ref(left: Dictionary, right: Dictionary) -> bool:

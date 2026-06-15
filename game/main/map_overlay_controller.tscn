@@ -1,7 +1,8 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://game/main/map_overlay_controller.gd" id="1_map_overlay_controller"]
-[ext_resource type="Script" path="res://game/ui/map_overlay.gd" id="2_map_overlay"]
+[ext_resource type="PackedScene" path="res://game/ui/minimap.tscn" id="2_minimap"]
+[ext_resource type="Script" path="res://game/ui/map_overlay.gd" id="3_map_overlay"]
 
 [node name="MapOverlayController" type="Control"]
 layout_mode = 3
@@ -13,10 +14,9 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("1_map_overlay_controller")
 
-[node name="Minimap" type="Control" parent="."]
+[node name="Minimap" parent="." instance=ExtResource("2_minimap")]
 unique_name_in_owner = true
-script = ExtResource("2_map_overlay")
 
 [node name="MapOverlay" type="Control" parent="."]
 unique_name_in_owner = true
-script = ExtResource("2_map_overlay")
+script = ExtResource("3_map_overlay")

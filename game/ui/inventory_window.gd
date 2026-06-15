@@ -8,7 +8,7 @@ signal slot_action_requested(slot_ref: Dictionary, action: String)
 const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd")
 const ItemCatalogScript := preload("res://game/items/item_catalog.gd")
 const ItemIconRendererScript := preload("res://game/ui/item_icon_renderer.gd")
-const InventorySlotScript := preload("res://game/ui/inventory_slot.gd")
+const InventorySlotScene := preload("res://game/ui/inventory_slot.tscn")
 
 const PANEL_BG := Color(0.070, 0.075, 0.065, 0.96)
 const PANEL_INNER_BG := Color(0.050, 0.055, 0.050, 0.92)
@@ -241,39 +241,17 @@ func _add_object_role_section(building_id: int, role: String, slots: Array) -> v
 
 
 func _slot_view(slot: Dictionary, slot_ref: Dictionary = {}) -> Control:
-	var panel_slot: PanelContainer = InventorySlotScript.new()
+	var panel_slot := InventorySlotScene.instantiate() as InventorySlot
 	panel_slot.custom_minimum_size = SLOT_SIZE
-	panel_slot.add_theme_stylebox_override("panel", _stylebox(SLOT_BG, SLOT_BORDER, 1, 0))
 
 	var item := str(slot.get("item", ""))
 	var amount := int(slot.get("amount", 0))
 	var texture: Texture2D = null
-	var icon := _item_icon(item, Vector2(32.0, 32.0))
-	texture = icon.texture
-	icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	icon.offset_left = 3.0
-	icon.offset_top = 3.0
-	icon.offset_right = -3.0
-	icon.offset_bottom = -3.0
-	panel_slot.add_child(icon)
-	if panel_slot is InventorySlot:
-		var inventory_slot := panel_slot as InventorySlot
-		inventory_slot.configure(slot_ref, item, amount, texture)
-		inventory_slot.transfer_requested.connect(_on_slot_transfer_requested)
-		inventory_slot.action_requested.connect(_on_slot_action_requested)
-
-	if amount > 1:
-		var amount_label := Label.new()
-		amount_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		amount_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		amount_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-		amount_label.add_theme_font_size_override("font_size", 11)
-		amount_label.add_theme_color_override("font_color", TEXT)
-		amount_label.text = str(amount)
-		amount_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		amount_label.offset_right = -3.0
-		amount_label.offset_bottom = -1.0
-		panel_slot.add_child(amount_label)
+	if not item.is_empty() and _item_icon_renderer != null:
+		texture = _item_icon_renderer.texture_for(item)
+	panel_slot.configure(slot_ref, item, amount, texture)
+	panel_slot.transfer_requested.connect(_on_slot_transfer_requested)
+	panel_slot.action_requested.connect(_on_slot_action_requested)
 
 	return panel_slot
 
@@ -284,18 +262,6 @@ func _on_slot_transfer_requested(from_ref: Dictionary, to_ref: Dictionary, amoun
 
 func _on_slot_action_requested(slot_ref: Dictionary, action: String) -> void:
 	slot_action_requested.emit(slot_ref, action)
-
-
-func _item_icon(item: String, minimum_size: Vector2) -> TextureRect:
-	var icon := TextureRect.new()
-	icon.custom_minimum_size = minimum_size
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	if not item.is_empty() and _item_icon_renderer != null:
-		icon.texture = _item_icon_renderer.texture_for(item)
-		icon.tooltip_text = ItemCatalogScript.display_name(item)
-	return icon
 
 
 func _update_cursor(snapshot: Dictionary) -> void:
