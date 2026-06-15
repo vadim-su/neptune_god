@@ -1,0 +1,312 @@
+extends Node
+
+const BASE_PORT := 9090
+const MAX_PORT := 9094
+const MAX_AUTH_FAILS := 5
+const LOCKOUT_BASE_SECONDS := 30.0
+const LOCKOUT_MAX_SECONDS := 300.0
+const _LOCKOUT_KEY := "localhost"  # All connections are localhost; single global rate limit
+const MAX_PEERS := 5
+const MAX_MESSAGE_SIZE := 1048576  # 1MB
+
+var _server: TCPServer
+var _peers: Array[WebSocketPeer] = []
+var _heartbeat: Node
+var _command_handler: Node
+var _current_port: int = 0
+var _request_counter: int = 0
+var _plugin: EditorPlugin
+var _panel: Control = null
+var _secret: String = ""
+var _secret_file: String = ""
+var _authenticated_peers: Dictionary = {}  # peer_id (int) -> true
+var _auth_fail_count: Dictionary = {}
+var _auth_locked_until: Dictionary = {}
+var _crypto: Crypto
+
+func setup(plugin: EditorPlugin) -> void:
+	_plugin = plugin
+
+func set_panel(panel: Control) -> void:
+	_panel = panel
+
+func _ready() -> void:
+	_crypto = Crypto.new()
+	_heartbeat = preload("heartbeat.gd").new()
+	add_child(_heartbeat)
+	_heartbeat.timeout_detected.connect(_on_heartbeat_timeout)
+
+	_command_handler = preload("command_handler.gd").new()
+	_command_handler.setup(_plugin)
+	add_child(_command_handler)
+
+	_generate_and_write_secret()
+	_start_server()
+
+func _generate_and_write_secret() -> void:
+	_secret = _generate_secret()
+	if _secret.length() < 32:
+		push_error("[MCP] Secret generation failed — WebSocket server will not start")
+		_secret = ""
+		return
+	var project_dir: String = _get_project_dir()
+	if project_dir == "":
+		push_warning("[MCP] Cannot determine project dir; editor auth disabled")
+		return
+	var godot_dir: String = project_dir.path_join(".godot")
+	var dir := DirAccess.open(project_dir)
+	if dir and not dir.dir_exists(".godot"):
+		dir.make_dir(".godot")
+	_secret_file = godot_dir.path_join("mcp_editor.key")
+	var f := FileAccess.open(_secret_file, FileAccess.WRITE)
+	if f:
+		f.store_string(_secret)
+		f.close()
+		print("[MCP] Auth secret written to %s" % _secret_file)
+	else:
+		push_warning("[MCP] Failed to write auth secret to %s" % _secret_file)
+
+# DUPLICATE: Keep in sync with src/scripts/mcp_bridge.gd:_generate_secret
+# Cannot share because editor plugin and game autoload have separate script contexts.
+func _generate_secret() -> String:
+	var chars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	var result := ""
+	var rng_bytes: PackedByteArray = _crypto.generate_random_bytes(64)
+	var idx := 0
+	while result.length() < 32 and idx < rng_bytes.size():
+		var b: int = rng_bytes[idx]
+		idx += 1
+		if b >= 256 - (256 % chars.length()):
+			continue
+		result += chars[b % chars.length()]
+	var fallback := 0
+	while result.length() < 32 and fallback < 10:
+		rng_bytes = _crypto.generate_random_bytes(64)
+		idx = 0
+		fallback += 1
+		while result.length() < 32 and idx < rng_bytes.size():
+			var b2: int = rng_bytes[idx]
+			idx += 1
+			if b2 >= 256 - (256 % chars.length()):
+				continue
+			result += chars[b2 % chars.length()]
+	if result.length() < 32:
+		push_error("[MCP] Failed to generate 32-char secret after 11 attempts — refusing to start with weak key")
+		return ""
+	return result
+
+func _get_project_dir() -> String:
+	var res_root: String = ProjectSettings.globalize_path("res://")
+	if res_root != "":
+		return res_root.rstrip("/")
+	return ""
+
+func _delete_secret_file() -> void:
+	if _secret_file != "" and FileAccess.file_exists(_secret_file):
+		DirAccess.remove_absolute(_secret_file)
+		print("[MCP] Auth secret file deleted")
+	_secret_file = ""
+	_secret = ""
+
+func _start_server() -> void:
+	if _secret == "":
+		push_error("[MCP] No valid auth secret — WebSocket server not started")
+		return
+	_server = TCPServer.new()
+	for port in range(BASE_PORT, MAX_PORT + 1):
+		if _server.listen(port, "127.0.0.1") == OK:
+			_current_port = port
+			print("[MCP] Listening on port %d" % port)
+			_update_panel("MCP: Listening on port %d" % port)
+			return
+	push_error("[MCP] All ports (%d-%d) occupied" % [BASE_PORT, MAX_PORT])
+
+func _process(delta: float) -> void:
+	if not _server: return
+
+	if _server.is_connection_available():
+		var tcp_peer = _server.take_connection()
+
+		if _peers.size() >= MAX_PEERS:
+			tcp_peer.disconnect_from_host()
+			push_warning("[MCP] Connection rejected: max peers reached (%d)" % MAX_PEERS)
+			_update_panel("MCP: Rejected connection (%d/%d peers)" % [_peers.size(), MAX_PEERS])
+			return
+
+		var ws_peer = WebSocketPeer.new()
+		ws_peer.set_inbound_buffer_size(MAX_MESSAGE_SIZE)
+		ws_peer.accept_stream(tcp_peer)
+		_peers.append(ws_peer)
+		print("[MCP] Client connected (total: %d)" % _peers.size())
+		_update_panel("MCP: %d client(s) connected" % _peers.size())
+
+	var to_remove: Array[int] = []
+	for i in range(_peers.size()):
+		var peer = _peers[i]
+		peer.poll()
+		match peer.get_ready_state():
+			WebSocketPeer.STATE_OPEN:
+				_heartbeat.tick(delta, peer)
+				var _pkt_count := 0
+				while peer.get_available_packet_count() > 0 and _pkt_count < 50:
+					var text = peer.get_packet().get_string_from_utf8()
+					_handle_message(text, peer)
+					_pkt_count += 1
+					_heartbeat.reset_activity(peer.get_instance_id())
+			WebSocketPeer.STATE_CLOSED:
+				to_remove.append(i)
+
+	for i in range(to_remove.size() - 1, -1, -1):
+		var removed_peer = _peers[to_remove[i]]
+		var rid: int = removed_peer.get_instance_id()
+		_heartbeat.remove_peer(rid)
+		_authenticated_peers.erase(rid)
+		_peers.remove_at(to_remove[i])
+		print("[MCP] Client disconnected")
+
+func _handle_message(text: String, peer: WebSocketPeer) -> void:
+	var pid: int = peer.get_instance_id()
+
+	var parsed = JSON.parse_string(text)
+	if not parsed or not parsed.has("jsonrpc"):
+		peer.send_text(JSON.stringify({"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid JSON-RPC"}}))
+		return
+
+	# Auth endpoint — always allowed
+	if parsed.get("method") == "auth":
+		if _secret == "":
+			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32002, "message": "Server auth not configured; connection rejected"}}))
+			peer.close()
+			return
+		# Check lockout
+		if _auth_locked_until.has(_LOCKOUT_KEY):
+			var locked_until: float = _auth_locked_until[_LOCKOUT_KEY]
+			if Time.get_ticks_msec() / 1000.0 < locked_until:
+				peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32002, "message": "Too many auth failures, temporarily locked"}}))
+				peer.close()
+				return
+			else:
+				_auth_locked_until.erase(_LOCKOUT_KEY)
+				_auth_fail_count[_LOCKOUT_KEY] = 0
+		var provided: String = str(parsed.get("params", {}).get("secret", ""))
+		if _constant_time_compare(provided, _secret):
+			_authenticated_peers[pid] = true
+			_auth_fail_count.erase(_LOCKOUT_KEY)
+			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "result": {"authenticated": true}}))
+			print("[MCP] Peer %d authenticated" % pid)
+			_send_session_sync(peer)
+		else:
+			var fails: int = int(_auth_fail_count.get(_LOCKOUT_KEY, 0)) + 1
+			_auth_fail_count[_LOCKOUT_KEY] = fails
+			if fails >= MAX_AUTH_FAILS:
+				var lockout_time := minf(LOCKOUT_BASE_SECONDS * pow(2.0, (float(fails) / MAX_AUTH_FAILS) - 1.0), LOCKOUT_MAX_SECONDS)
+				_auth_locked_until[_LOCKOUT_KEY] = Time.get_ticks_msec() / 1000.0 + lockout_time
+			peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32001, "message": "Authentication failed"}}))
+			peer.close()
+		return
+
+	# All other methods require authentication
+	if _secret == "" or not _authenticated_peers.has(pid):
+		peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32001, "message": "Authentication required"}}))
+		peer.close()
+		return
+
+	if parsed.get("method") == "operation_start":
+		var timeout = parsed.get("params", {}).get("timeout", 300)
+		_heartbeat.pause_for_operation(timeout)
+		_update_panel("MCP: Operation in progress...")
+		var _op_panel := _get_panel()
+		if _op_panel: _op_panel.set_operation_active(true)
+		peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "result": {}}))
+		return
+
+	if parsed.get("method") == "operation_end":
+		_heartbeat.resume()
+		_update_panel("MCP: %d client(s) connected" % _peers.size())
+		var _op_panel := _get_panel()
+		if _op_panel: _op_panel.set_operation_active(false)
+		peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "result": {}}))
+		return
+
+	if parsed.get("method") == "request_sync":
+		_send_session_sync(peer)
+		return
+
+	if parsed.get("method") == "ping":
+		_heartbeat.reset_activity(peer.get_instance_id())
+		return
+
+	_request_counter = (_request_counter + 1) % 1000000
+	var response = _command_handler.handle(parsed.get("method", ""), parsed.get("params", {}), _request_counter)
+	if response == null or not response is Dictionary:
+		push_warning("[MCP] command_handler returned null/non-dict for method: %s" % parsed.get("method", ""))
+		peer.send_text(JSON.stringify({"jsonrpc": "2.0", "id": parsed.get("id"), "error": {"code": -32603, "message": "Internal error: handler returned invalid response"}}))
+		return
+	var reply = {"jsonrpc": "2.0", "id": parsed.get("id")}
+	if response.has("error"):
+		reply["error"] = response.error
+	else:
+		reply["result"] = response.result
+	peer.send_text(JSON.stringify(reply))
+
+func _send_session_sync(peer: WebSocketPeer) -> void:
+	var open_scenes: Array = []
+	if _plugin:
+		var ei = _plugin.get_editor_interface()
+		open_scenes = ei.get_open_scenes()
+	peer.send_text(JSON.stringify({"method": "session_resync", "params": {"open_scenes": open_scenes}}))
+
+func _on_heartbeat_timeout(peer_id: int) -> void:
+	push_warning("[MCP] Heartbeat timeout (peer_id: %d)" % peer_id)
+	_update_panel("MCP: Connection timeout!")
+	if peer_id == -1:
+		for peer in _peers:
+			peer.close()
+	else:
+		for peer in _peers:
+			if peer.get_instance_id() == peer_id:
+				peer.close()
+				break
+
+func cancel_current_operation() -> void:
+	_heartbeat.resume()
+	_update_panel("MCP: Operation cancelled")
+	for peer in _peers:
+		peer.send_text(JSON.stringify({"method": "operation_cancelled", "params": {}}))
+
+func _update_panel(text: String) -> void:
+	var panel = _get_panel()
+	if panel: panel.update_status(text)
+
+func _get_panel() -> Node:
+	if _panel and is_instance_valid(_panel):
+		return _panel
+	return null
+
+# DUPLICATE: Keep in sync with src/scripts/mcp_bridge.gd:_constant_time_compare
+# Cannot share because editor plugin and game autoload have separate script contexts.
+# C-05: Fixed-length comparison (always 32 bytes) to prevent timing side-channel.
+func _constant_time_compare(a: String, b: String) -> bool:
+	const SECRET_LEN := 32
+	var result := 0
+	# Always compare exactly SECRET_LEN bytes regardless of input length
+	for i in range(SECRET_LEN):
+		var ca := ord(a[i]) if i < a.length() else 0
+		var cb := ord(b[i]) if i < b.length() else 0
+		result = result | (ca ^ cb)
+	# Reject if either input length differs from expected
+	if a.length() != SECRET_LEN or b.length() != SECRET_LEN:
+		return false
+	return result == 0
+
+func _exit_tree() -> void:
+	set_process(false)
+	if _heartbeat:
+		_heartbeat.timeout_detected.disconnect(_on_heartbeat_timeout)
+	if _server: _server.stop()
+	for peer in _peers: peer.close()
+	_peers.clear()
+	_authenticated_peers.clear()
+	_auth_fail_count.clear()
+	_auth_locked_until.clear()
+	_delete_secret_file()

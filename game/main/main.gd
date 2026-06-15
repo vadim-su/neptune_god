@@ -9,7 +9,12 @@ const MachineWindowScene := preload("res://game/ui/machine_window.tscn")
 const CatalogSelectorScene := preload("res://game/ui/catalog_selector.tscn")
 const InventoryWindowScene := preload("res://game/ui/inventory_window.tscn")
 const DevConsoleScene := preload("res://game/ui/dev_console.tscn")
-const MapOverlayScript := preload("res://game/ui/map_overlay.gd")
+const CameraControllerScript := preload("res://game/main/camera_controller.gd")
+const DevConsoleControllerScript := preload("res://game/main/dev_console_controller.gd")
+const InventoryControllerScript := preload("res://game/main/inventory_controller.gd")
+const MapOverlayControllerScript := preload("res://game/main/map_overlay_controller.gd")
+const PlayerZoneOverlayControllerScript := preload("res://game/main/player_zone_overlay_controller.gd")
+const WorldStreamingControllerScript := preload("res://game/main/world_streaming_controller.gd")
 const HOTBAR_SELECTOR_OWNER_PREFIX := "hotbar:"
 
 @onready var camera: Camera3D = %Camera3D
@@ -23,24 +28,22 @@ const CAMERA_MIN_DISTANCE := 10.0
 const CAMERA_MAX_DISTANCE := 96.0
 const CAMERA_TARGET_HEIGHT := 0.75
 const CAMERA_GENERATION_MARGIN_TILES := 16
-const CAMERA_FOOTPRINT_FALLBACK_RADIUS := 48
 const CAMERA_MAX_VISIBLE_TILE_RADIUS := 64
+const STREAMING_PRELOAD_CHUNK_RING := 1
 const CAMERA_MIN_ELEVATION := deg_to_rad(30.0)
 const CAMERA_MAX_ELEVATION := deg_to_rad(76.0)
 const CAMERA_FAR_PADDING := 32.0
 const BUILD_GHOST_Y := 0.075
 const PLAYER_COLLISION_RADIUS := 0.32
-const PLAYER_ZONE_RADIUS := 12.0
-const PLAYER_ZONE_Y := 0.045
 const GHOST_VALID_COLOR := Color(0.28, 0.78, 1.0, 0.38)
 const GHOST_BLOCKED_COLOR := Color(1.0, 0.22, 0.18, 0.38)
 
 enum BuildMode { NEUTRAL, BUILD }
 
 var sim: NeptuneSim
-var camera_yaw := deg_to_rad(42.0)
-var camera_elevation := deg_to_rad(58.0)
-var camera_distance := 32.0
+var chunk_tile_provider: NeptuneChunkTileProvider
+var camera_controller: RefCounted
+var world_streaming_controller: RefCounted
 var build_mode := BuildMode.NEUTRAL
 var selected_building_id := ""
 var selected_object_id := -1
@@ -55,15 +58,15 @@ var selection_outline_root: Node3D
 var machine_window: MachineWindow
 var catalog_selector: Node
 var inventory_window: Node
+var inventory_controller: RefCounted
 var dev_console: Node
+var dev_console_controller: RefCounted
+var map_overlay_controller: MapOverlayController
 var minimap: Control
 var map_overlay: Control
 var chunk_size := 32
-var visible_chunk_rect_valid := false
-var visible_chunk_rect := Rect2i()
-var player_zone_overlay: MeshInstance3D
+var player_zone_controller: RefCounted
 var initialized := false
-var map_snapshot_dirty := true
 
 
 func _ready() -> void:
@@ -79,7 +82,29 @@ func _ready() -> void:
 	):
 		push_error("Failed to configure simulation catalogs")
 		return
+	chunk_tile_provider = NeptuneChunkTileProvider.new()
+	if not chunk_tile_provider.configure_worldgen(_catalog_rows("resources"), _catalog_rows("worldgen")):
+		push_error("Failed to configure render worldgen provider")
+		return
 	chunk_size = int(sim.chunk_size())
+	camera_controller = CameraControllerScript.new()
+	camera_controller.min_distance = CAMERA_MIN_DISTANCE
+	camera_controller.max_distance = CAMERA_MAX_DISTANCE
+	camera_controller.target_height = CAMERA_TARGET_HEIGHT
+	camera_controller.min_elevation = CAMERA_MIN_ELEVATION
+	camera_controller.max_elevation = CAMERA_MAX_ELEVATION
+	camera_controller.far_padding = CAMERA_FAR_PADDING
+	camera_controller.max_visible_tile_radius = CAMERA_MAX_VISIBLE_TILE_RADIUS
+	world_streaming_controller = WorldStreamingControllerScript.new()
+	world_streaming_controller.setup(
+		environment,
+		chunk_tile_provider,
+		chunk_size,
+		CAMERA_MAX_VISIBLE_TILE_RADIUS,
+		STREAMING_PRELOAD_CHUNK_RING
+	)
+	if environment.has_signal("chunks_changed"):
+		environment.chunks_changed.connect(_on_environment_chunks_changed)
 	player.can_move_to = Callable(self, "_is_player_position_walkable")
 	_update_camera()
 	_sync_world_around_camera(true)
@@ -92,18 +117,30 @@ func _ready() -> void:
 	selection_outline_root.name = "SelectionOutline"
 	selection_outline_root.visible = false
 	add_child(selection_outline_root)
-	_create_player_zone_overlay()
+	player_zone_controller = PlayerZoneOverlayControllerScript.new()
+	player_zone_controller.setup(self, player, Callable(self, "_player_zone_should_be_visible"))
 	machine_window = MachineWindowScene.instantiate() as MachineWindow
 	$Hud.add_child(machine_window)
 	machine_window.recipe_selected.connect(_on_machine_recipe_selected)
 	inventory_window = InventoryWindowScene.instantiate()
 	$Hud.add_child(inventory_window)
-	inventory_window.slot_transfer_requested.connect(_on_inventory_slot_transfer_requested)
-	inventory_window.slot_action_requested.connect(_on_inventory_slot_action_requested)
+	inventory_controller = InventoryControllerScript.new()
+	inventory_controller.setup(
+		inventory_window,
+		machine_window,
+		sim,
+		Callable(self, "_selected_object_snapshot")
+	)
 	dev_console = DevConsoleScene.instantiate()
 	$Hud.add_child(dev_console)
-	dev_console.command_submitted.connect(_on_dev_console_command_submitted)
-	dev_console.set_completions(_dev_console_completions())
+	dev_console_controller = DevConsoleControllerScript.new()
+	dev_console_controller.setup(
+		dev_console,
+		sim,
+		inventory_window,
+		Callable(inventory_controller, "update"),
+		Callable(self, "_selected_object_snapshot")
+	)
 	_create_map_overlays()
 	catalog_selector = CatalogSelectorScene.instantiate()
 	$Hud.add_child(catalog_selector)
@@ -130,22 +167,25 @@ func _catalog_rows(catalog_kind: String) -> Array:
 	return []
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if not initialized:
 		return
 
 	player.input_blocked = _ui_blocks_gameplay_input()
-	if inventory_window != null and inventory_window.is_open():
-		_update_inventory_window()
+	if inventory_controller != null and inventory_controller.is_open():
+		inventory_controller.update()
 	_update_camera()
 	_sync_world_around_camera(false)
-	_update_player_zone_overlay()
+	if player_zone_controller != null:
+		player_zone_controller.update()
 	_update_build_preview()
-	_update_map_overlay_player_position()
+	if map_overlay_controller != null:
+		map_overlay_controller.process(delta)
 
 
 func _physics_process(_delta: float) -> void:
-	player.movement_yaw = camera_yaw
+	if camera_controller != null:
+		player.movement_yaw = camera_controller.yaw
 
 
 func _input(event: InputEvent) -> void:
@@ -176,48 +216,28 @@ func _input(event: InputEvent) -> void:
 	if map_overlay != null and map_overlay.is_fullscreen_open():
 		if event is InputEventKey and event.pressed and not event.echo:
 			if event.keycode == KEY_ESCAPE or event.keycode == KEY_M:
-				map_overlay.set_fullscreen_open(false)
-				_update_map_overlays()
+				if map_overlay_controller != null:
+					map_overlay_controller.close_fullscreen()
+				else:
+					map_overlay.set_fullscreen_open(false)
 				_update_camera()
 				get_viewport().set_input_as_handled()
-		elif event is InputEventMouseButton and event.pressed:
-			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-				map_overlay.zoom_by(1.25)
-				_update_camera()
-				get_viewport().set_input_as_handled()
-			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-				map_overlay.zoom_by(0.80)
-				_update_camera()
-				get_viewport().set_input_as_handled()
-		elif event is InputEventMouseMotion:
-			if map_overlay.has_method("handle_fullscreen_mouse_motion"):
-				map_overlay.handle_fullscreen_mouse_motion(event)
-				if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
-					_update_camera()
-			else:
-				_refresh_map_overlay_resource_selection()
-			get_viewport().set_input_as_handled()
-		else:
+		elif not (event is InputEventMouse):
 			get_viewport().set_input_as_handled()
 		return
 
 	if event is InputEventMouseMotion and Input.is_mouse_button_pressed(MOUSE_BUTTON_MIDDLE):
-		camera_yaw -= event.relative.x * 0.006
-		camera_elevation = clamp(
-			camera_elevation - event.relative.y * 0.006,
-			CAMERA_MIN_ELEVATION,
-			CAMERA_MAX_ELEVATION
-		)
+		camera_controller.rotate(event.relative)
 		_update_camera()
 		get_viewport().set_input_as_handled()
 	elif event is InputEventMouseButton and event.pressed:
 		match event.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
-				camera_distance = max(CAMERA_MIN_DISTANCE, camera_distance - 0.5)
+				camera_controller.zoom_in(0.5)
 				_update_camera()
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_WHEEL_DOWN:
-				camera_distance = min(CAMERA_MAX_DISTANCE, camera_distance + 0.5)
+				camera_controller.zoom_out(0.5)
 				_update_camera()
 				get_viewport().set_input_as_handled()
 			MOUSE_BUTTON_RIGHT:
@@ -266,111 +286,82 @@ func _ui_blocks_gameplay_input() -> bool:
 
 
 func _update_camera() -> void:
-	var detailed_blend := 0.0
-	if map_overlay != null:
-		detailed_blend = map_overlay.detailed_world_blend()
-
-	var target: Vector3 = player.global_position + Vector3.UP * CAMERA_TARGET_HEIGHT
-	var horizontal_distance := camera_distance * cos(camera_elevation)
-	var offset := Vector3(
-		horizontal_distance * sin(camera_yaw),
-		camera_distance * sin(camera_elevation),
-		horizontal_distance * cos(camera_yaw)
-	)
-	var gameplay_position := target + offset
-	camera.far = _gameplay_camera_far_clip()
-	if detailed_blend <= 0.0:
-		camera.global_position = gameplay_position
-		camera.look_at(target, Vector3.UP)
+	if camera_controller == null:
 		return
-
-	var detailed_center := Vector2(player.global_position.x, player.global_position.z)
-	if map_overlay != null and map_overlay.has_method("map_center"):
-		detailed_center = map_overlay.map_center()
-	var detailed_target := Vector3(detailed_center.x, 0.0, detailed_center.y)
-	var viewport_height := get_viewport().get_visible_rect().size.y
-	var height: float = _detailed_map_camera_height(
-		map_overlay.pixels_per_tile(),
-		viewport_height,
-		camera.fov
-	)
-	var detailed_position := detailed_target + Vector3(0.0, height, 0.02)
-	camera.global_position = gameplay_position.lerp(detailed_position, detailed_blend)
-	var up_vector := _map_camera_up_vector(detailed_blend)
-	camera.look_at(target.lerp(detailed_target, detailed_blend), up_vector)
+	camera_controller.apply(camera, player.global_position, map_overlay, get_viewport())
 
 
 func _map_camera_up_vector(detailed_blend: float) -> Vector3:
-	return Vector3.UP.lerp(Vector3.BACK, detailed_blend).normalized()
+	return CameraControllerScript.map_camera_up_vector(detailed_blend)
 
 
 func _detailed_map_camera_height(pixels_per_tile: float, viewport_height: float, fov_degrees: float) -> float:
-	var visible_world_height := maxf(viewport_height, 1.0) / maxf(pixels_per_tile, 1.0)
-	var half_fov := deg_to_rad(fov_degrees) * 0.5
-	return visible_world_height / (2.0 * tan(half_fov))
+	return CameraControllerScript.detailed_map_camera_height(pixels_per_tile, viewport_height, fov_degrees)
 
 
 func _gameplay_camera_far_clip() -> float:
-	return camera_distance + float(CAMERA_MAX_VISIBLE_TILE_RADIUS) + CAMERA_FAR_PADDING
+	if camera_controller == null:
+		return CAMERA_MAX_DISTANCE + float(CAMERA_MAX_VISIBLE_TILE_RADIUS) + CAMERA_FAR_PADDING
+	return camera_controller.gameplay_far_clip()
+
+
+func _should_render_3d_world() -> bool:
+	if map_overlay_controller != null:
+		return map_overlay_controller.should_render_3d_world()
+	if camera_controller == null:
+		if map_overlay == null or not map_overlay.is_fullscreen_open():
+			return true
+		if not map_overlay.has_method("detailed_world_visible"):
+			return true
+		return map_overlay.detailed_world_visible()
+	return camera_controller.should_render_3d_world(map_overlay)
+
+
+func _update_3d_rendering_gate() -> void:
+	if camera_controller == null:
+		return
+	camera_controller._update_3d_rendering_gate(get_viewport(), map_overlay)
 
 
 func _sync_world_around_camera(force: bool) -> void:
-	var chunk_rect := _streaming_chunk_rect_for(player.global_position)
-	if not force and visible_chunk_rect_valid and visible_chunk_rect == chunk_rect:
+	if world_streaming_controller == null:
 		return
-
-	var min_chunk := chunk_rect.position
-	var max_chunk := chunk_rect.position + chunk_rect.size - Vector2i.ONE
-	sim.ensure_generated_rect(
-		min_chunk.x * chunk_size,
-		min_chunk.y * chunk_size,
-		(max_chunk.x + 1) * chunk_size - 1,
-		(max_chunk.y + 1) * chunk_size - 1
-	)
-	environment.sync_chunks(sim, _chunks_in_rect(min_chunk, max_chunk))
-	visible_chunk_rect = chunk_rect
-	visible_chunk_rect_valid = true
+	var changed: bool = world_streaming_controller.sync_around_position(_streaming_center_position(player.global_position), force)
+	if not changed:
+		return
 	_mark_map_snapshot_dirty()
 	_update_status_label()
-	_update_map_overlays()
 
 
 func _create_map_overlays() -> void:
-	minimap = MapOverlayScript.new()
-	minimap.name = "Minimap"
-	minimap.configure_minimap()
-	$Hud.add_child(minimap)
+	map_overlay_controller = MapOverlayControllerScript.new()
+	map_overlay_controller.name = "MapOverlayController"
+	add_child(map_overlay_controller)
+	map_overlay_controller.setup($Hud, environment, sim, player, hotbar)
+	map_overlay_controller.view_changed.connect(_on_map_overlay_view_changed)
+	minimap = map_overlay_controller.minimap
+	map_overlay = map_overlay_controller.map_overlay
 
-	map_overlay = MapOverlayScript.new()
-	map_overlay.name = "MapOverlay"
-	map_overlay.configure_fullscreen()
-	$Hud.add_child(map_overlay)
+
+func _keep_hotbar_above_map_overlay() -> void:
+	if map_overlay_controller != null:
+		map_overlay_controller.keep_hotbar_above_map_overlay()
+		return
+	if hotbar == null or map_overlay == null:
+		return
+	hotbar.z_index = map_overlay.z_index + 10
 
 
 func _toggle_map_overlay() -> void:
-	if map_overlay == null:
+	if map_overlay_controller == null:
 		return
-	if map_overlay.is_fullscreen_open():
-		map_overlay.set_fullscreen_open(false)
-	else:
-		map_overlay.center_on_player()
-		map_overlay.set_fullscreen_open(true)
-	_update_map_overlays()
+	map_overlay_controller.toggle_fullscreen()
 	_update_camera()
 
 
 func _update_map_overlays(force_snapshot: bool = false) -> void:
-	if environment == null or minimap == null or map_overlay == null or sim == null or player == null:
-		return
-	minimap.visible = not map_overlay.is_fullscreen_open()
-	if not force_snapshot and not map_snapshot_dirty:
-		_update_map_overlay_player_position()
-		return
-	var map_snapshot: Dictionary = environment.explored_tile_snapshot()
-	var visible_snapshot: Dictionary = environment.visible_tile_snapshot()
-	var buildings: Array = sim.buildings()
-	_apply_map_overlay_snapshots(map_snapshot, visible_snapshot, buildings, player.global_position)
-	map_snapshot_dirty = false
+	if map_overlay_controller != null:
+		map_overlay_controller.update_snapshots(force_snapshot)
 
 
 func _apply_map_overlay_snapshots(
@@ -379,15 +370,14 @@ func _apply_map_overlay_snapshots(
 	buildings: Array,
 	player_position: Vector3
 ) -> void:
-	var tiles: Array = map_snapshot["tiles"]
-	var tile_rect: Rect2i = map_snapshot["rect"]
-	var visible_tiles: Array = visible_snapshot["tiles"]
-	var current_visible_rect: Rect2i = visible_snapshot["rect"]
-	minimap.set_world_snapshot(visible_tiles, buildings, current_visible_rect, player_position, current_visible_rect)
-	map_overlay.set_world_snapshot(tiles, buildings, tile_rect, player_position, current_visible_rect)
+	if map_overlay_controller != null:
+		map_overlay_controller.apply_chunk_snapshots(map_snapshot, visible_snapshot, buildings, player_position)
 
 
 func _update_map_overlay_player_position() -> void:
+	if map_overlay_controller != null:
+		map_overlay_controller.update_player_position()
+		return
 	if minimap == null or map_overlay == null or player == null:
 		return
 	minimap.visible = not map_overlay.is_fullscreen_open()
@@ -396,173 +386,78 @@ func _update_map_overlay_player_position() -> void:
 
 
 func _refresh_map_overlay_resource_selection() -> void:
+	if map_overlay_controller != null:
+		map_overlay_controller.refresh_resource_selection()
+		return
 	if map_overlay != null and map_overlay.has_method("refresh_resource_selection"):
 		map_overlay.refresh_resource_selection()
 
 
 func _mark_map_snapshot_dirty() -> void:
-	map_snapshot_dirty = true
+	if map_overlay_controller != null:
+		map_overlay_controller.mark_dirty()
+
+
+func _on_environment_chunks_changed() -> void:
+	_mark_map_snapshot_dirty()
+	_update_status_label()
+
+
+func _on_map_overlay_view_changed() -> void:
+	if camera != null and player != null:
+		_update_camera()
 
 
 func _visible_chunk_rect_for(tile_rect: Rect2i, player_position: Vector3) -> Rect2i:
-	var min_tile := tile_rect.position - Vector2i(CAMERA_GENERATION_MARGIN_TILES, CAMERA_GENERATION_MARGIN_TILES)
-	var max_tile := tile_rect.position + tile_rect.size - Vector2i.ONE + Vector2i(CAMERA_GENERATION_MARGIN_TILES, CAMERA_GENERATION_MARGIN_TILES)
-	var player_tile := _world_to_tile(player_position)
-	min_tile = Vector2i(mini(min_tile.x, player_tile.x), mini(min_tile.y, player_tile.y))
-	max_tile = Vector2i(maxi(max_tile.x, player_tile.x), maxi(max_tile.y, player_tile.y))
-	min_tile = _clamp_tile_to_visible_radius(min_tile, player_tile)
-	max_tile = _clamp_tile_to_visible_radius(max_tile, player_tile)
-
-	var min_chunk := _tile_to_chunk(min_tile)
-	var max_chunk := _tile_to_chunk(max_tile)
-	return Rect2i(min_chunk, max_chunk - min_chunk + Vector2i.ONE)
+	return WorldStreamingControllerScript.visible_chunk_rect_for(
+		tile_rect,
+		player_position,
+		chunk_size,
+		CAMERA_GENERATION_MARGIN_TILES,
+		CAMERA_MAX_VISIBLE_TILE_RADIUS
+	)
 
 
 func _streaming_chunk_rect_for(player_position: Vector3) -> Rect2i:
-	var player_chunk := _tile_to_chunk(_world_to_tile(player_position))
-	var chunk_radius := int(ceil(float(CAMERA_MAX_VISIBLE_TILE_RADIUS) / float(chunk_size)))
-	var min_chunk := player_chunk - Vector2i(chunk_radius, chunk_radius)
-	var max_chunk := player_chunk + Vector2i(chunk_radius, chunk_radius)
-	return Rect2i(min_chunk, max_chunk - min_chunk + Vector2i.ONE)
+	return WorldStreamingControllerScript.streaming_chunk_rect_for(
+		player_position,
+		chunk_size,
+		CAMERA_MAX_VISIBLE_TILE_RADIUS
+	)
+
+
+func _preload_chunk_rect_for(visible_rect: Rect2i) -> Rect2i:
+	return WorldStreamingControllerScript.preload_chunk_rect_for(visible_rect, STREAMING_PRELOAD_CHUNK_RING)
+
+
+func _streaming_center_position(player_position: Vector3) -> Vector3:
+	return player_position
 
 
 func _clamp_tile_to_visible_radius(tile: Vector2i, center: Vector2i) -> Vector2i:
-	return Vector2i(
-		clampi(tile.x, center.x - CAMERA_MAX_VISIBLE_TILE_RADIUS, center.x + CAMERA_MAX_VISIBLE_TILE_RADIUS),
-		clampi(tile.y, center.y - CAMERA_MAX_VISIBLE_TILE_RADIUS, center.y + CAMERA_MAX_VISIBLE_TILE_RADIUS)
-	)
-
-
-func _camera_ground_tile_rect() -> Rect2i:
-	var viewport_size := get_viewport().get_visible_rect().size
-	if viewport_size.x <= 0.0 or viewport_size.y <= 0.0:
-		return _fallback_ground_tile_rect()
-
-	var ground_points: Array[Vector2] = []
-	var corners := [
-		Vector2.ZERO,
-		Vector2(viewport_size.x, 0.0),
-		viewport_size,
-		Vector2(0.0, viewport_size.y),
-	]
-	for corner: Vector2 in corners:
-		var origin := camera.project_ray_origin(corner)
-		var direction := camera.project_ray_normal(corner)
-		if absf(direction.y) < 0.0001:
-			continue
-		var distance := -origin.y / direction.y
-		if distance < 0.0:
-			continue
-		var hit := origin + direction * distance
-		ground_points.append(Vector2(hit.x, hit.z))
-
-	if ground_points.is_empty():
-		return _fallback_ground_tile_rect()
-
-	var min_x := ground_points[0].x
-	var max_x := ground_points[0].x
-	var min_y := ground_points[0].y
-	var max_y := ground_points[0].y
-	for point: Vector2 in ground_points:
-		min_x = minf(min_x, point.x)
-		max_x = maxf(max_x, point.x)
-		min_y = minf(min_y, point.y)
-		max_y = maxf(max_y, point.y)
-
-	var min_tile := Vector2i(int(floor(min_x - 0.5)), int(floor(min_y - 0.5)))
-	var max_tile := Vector2i(int(ceil(max_x + 0.5)), int(ceil(max_y + 0.5)))
-	return Rect2i(min_tile, max_tile - min_tile + Vector2i.ONE)
-
-
-func _fallback_ground_tile_rect() -> Rect2i:
-	var center := _world_to_tile(player.global_position)
-	var radius := CAMERA_FOOTPRINT_FALLBACK_RADIUS
-	return Rect2i(center - Vector2i(radius, radius), Vector2i(radius * 2 + 1, radius * 2 + 1))
+	return WorldStreamingControllerScript.clamp_tile_to_visible_radius(tile, center, CAMERA_MAX_VISIBLE_TILE_RADIUS)
 
 
 func _world_to_tile(position: Vector3) -> Vector2i:
-	return Vector2i(int(round(position.x)), int(round(position.z)))
+	return WorldStreamingControllerScript.world_to_tile(position)
 
 
 func _tile_to_chunk(tile: Vector2i) -> Vector2i:
-	return Vector2i(
-		int(floor(float(tile.x) / float(chunk_size))),
-		int(floor(float(tile.y) / float(chunk_size)))
-	)
+	return WorldStreamingControllerScript.tile_to_chunk(tile, chunk_size)
 
 
 func _chunks_in_rect(min_chunk: Vector2i, max_chunk: Vector2i) -> Array:
-	var chunks: Array[Vector2i] = []
-	for chunk_y in range(min_chunk.y, max_chunk.y + 1):
-		for chunk_x in range(min_chunk.x, max_chunk.x + 1):
-			chunks.append(Vector2i(chunk_x, chunk_y))
-	return chunks
-
-
-func _create_player_zone_overlay() -> void:
-	player_zone_overlay = MeshInstance3D.new()
-	player_zone_overlay.name = "PlayerZoneOverlay"
-	player_zone_overlay.mesh = _player_zone_mesh()
-	player_zone_overlay.material_override = _transparent_material(Color(0.28, 0.78, 1.0, 0.18))
-	add_child(player_zone_overlay)
-	_update_player_zone_overlay()
-
-
-func _update_player_zone_overlay() -> void:
-	if player_zone_overlay == null:
-		return
-	player_zone_overlay.visible = _should_show_player_zone_overlay()
-	if not player_zone_overlay.visible:
-		return
-	player_zone_overlay.global_position = Vector3(player.global_position.x, PLAYER_ZONE_Y, player.global_position.z)
+	return WorldStreamingControllerScript.chunks_in_rect(min_chunk, max_chunk)
 
 
 func _should_show_player_zone_overlay() -> bool:
+	if player_zone_controller != null:
+		return player_zone_controller.should_show()
+	return _player_zone_should_be_visible()
+
+
+func _player_zone_should_be_visible() -> bool:
 	return map_overlay == null or not map_overlay.is_fullscreen_open()
-
-
-func _player_zone_mesh() -> ArrayMesh:
-	var segments := 96
-	var inner_radius := PLAYER_ZONE_RADIUS - 0.08
-	var outer_radius := PLAYER_ZONE_RADIUS + 0.08
-	var vertices := PackedVector3Array()
-	var normals := PackedVector3Array()
-	var colors := PackedColorArray()
-	var indices := PackedInt32Array()
-
-	for index in range(segments):
-		var angle := TAU * float(index) / float(segments)
-		var direction := Vector3(cos(angle), 0.0, sin(angle))
-		vertices.append(direction * inner_radius)
-		vertices.append(direction * outer_radius)
-		normals.append(Vector3.UP)
-		normals.append(Vector3.UP)
-		colors.append(Color(0.28, 0.78, 1.0, 0.10))
-		colors.append(Color(0.28, 0.78, 1.0, 0.34))
-
-	for index in range(segments):
-		var next_index := (index + 1) % segments
-		var inner_a := index * 2
-		var outer_a := inner_a + 1
-		var inner_b := next_index * 2
-		var outer_b := inner_b + 1
-		indices.append(inner_a)
-		indices.append(outer_a)
-		indices.append(outer_b)
-		indices.append(inner_a)
-		indices.append(outer_b)
-		indices.append(inner_b)
-
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = vertices
-	arrays[Mesh.ARRAY_NORMAL] = normals
-	arrays[Mesh.ARRAY_COLOR] = colors
-	arrays[Mesh.ARRAY_INDEX] = indices
-
-	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	return mesh
 
 
 func _on_hotbar_selected(entry_id: String) -> void:
@@ -597,106 +492,16 @@ func _on_catalog_selector_closed(owner_id: String) -> void:
 	hotbar.cancel_assignment(slot_index)
 
 
-func _on_dev_console_command_submitted(line: String) -> void:
-	var parts := line.split(" ", false)
-	if parts.is_empty():
-		return
-
-	match str(parts[0]).to_lower():
-		"help":
-			dev_console.append_lines([
-				"commands: help, clear, status, items, give <item> <amount>",
-				"F1 toggles console. Up/Down navigate history. Tab completes item ids.",
-			])
-		"clear":
-			dev_console.clear_scrollback()
-		"status":
-			dev_console.append_output(
-				"tick=%d digest=%d buildings=%d selected=%s" % [
-					sim.core_tick(),
-					sim.digest(),
-					sim.building_count(),
-					"none" if selected_object.is_empty() else "%s #%d" % [str(selected_object.get("def_id", "")), selected_object_id],
-				]
-			)
-		"items":
-			dev_console.append_output("items: %s" % "  ".join(_item_ids()))
-		"give":
-			_execute_give_command(parts)
-		_:
-			dev_console.append_output("Unknown command '%s'. Use 'help' for commands." % str(parts[0]))
-
-
-func _execute_give_command(parts: PackedStringArray) -> void:
-	if parts.size() < 2:
-		dev_console.append_output("Usage: give <item> <amount>")
-		return
-	var item_id := str(parts[1])
-	var amount := 1
-	if parts.size() >= 3:
-		amount = max(1, int(parts[2]))
-	if sim.give_item(item_id, amount):
-		dev_console.append_output("Added %s x%d" % [item_id, amount])
-		if inventory_window != null and inventory_window.is_open():
-			_update_inventory_window()
-		return
-	dev_console.append_output("Could not add %s x%d" % [item_id, amount])
-
-
-func _dev_console_completions() -> Array:
-	var completions: Array = ["help", "clear", "status", "items", "give"]
-	for item_id: String in _item_ids():
-		completions.append(item_id)
-	return completions
-
-
-func _item_ids() -> Array[String]:
-	var ids: Array[String] = []
-	for raw_definition: Variant in ItemCatalogScript.definitions():
-		var definition: Dictionary = raw_definition
-		var id := str(definition.get("id", ""))
-		if not id.is_empty():
-			ids.append(id)
-	return ids
+func _selected_object_snapshot() -> Dictionary:
+	return {
+		"id": selected_object_id,
+		"object": selected_object,
+	}
 
 
 func _toggle_inventory_window() -> void:
-	if inventory_window.is_open():
-		inventory_window.hide_window()
-		return
-	machine_window.hide_window()
-	_update_inventory_window()
-	inventory_window.show_inventory(
-		sim.inventory_snapshot(),
-		selected_object,
-		_selected_object_ui_snapshot()
-	)
-
-
-func _update_inventory_window() -> void:
-	if inventory_window == null:
-		return
-	inventory_window.update_inventory(
-		sim.inventory_snapshot(),
-		selected_object,
-		_selected_object_ui_snapshot()
-	)
-
-
-func _on_inventory_slot_transfer_requested(from_ref: Dictionary, to_ref: Dictionary, amount: int) -> void:
-	if sim.transfer_inventory_slot(from_ref, to_ref, amount):
-		_update_inventory_window()
-
-
-func _on_inventory_slot_action_requested(slot_ref: Dictionary, action: String) -> void:
-	if sim.click_inventory_slot(slot_ref, action):
-		_update_inventory_window()
-
-
-func _selected_object_ui_snapshot() -> Dictionary:
-	if selected_object.is_empty():
-		return {}
-	return sim.building_ui_snapshot(selected_object_id)
+	if inventory_controller != null:
+		inventory_controller.toggle()
 
 
 func _building_selector_entries() -> Array:
@@ -800,7 +605,6 @@ func _try_place_selected_building() -> void:
 		_update_build_preview()
 		_update_status_label()
 		_mark_map_snapshot_dirty()
-		_update_map_overlays()
 		get_viewport().set_input_as_handled()
 
 
@@ -838,7 +642,6 @@ func _try_remove_building_at_pointer() -> void:
 	_update_build_preview()
 	_update_status_label()
 	_mark_map_snapshot_dirty()
-	_update_map_overlays()
 
 
 func _mouse_ground_tile() -> Variant:
@@ -871,6 +674,8 @@ func _sync_ghost_tiles(footprint: Array, color: Color) -> void:
 
 func _render_buildings_from_sim() -> void:
 	BuildingRendererScript.render_from_sim(sim, buildings_root, building_tile_index, blocked_building_tiles)
+	if map_overlay_controller != null:
+		map_overlay_controller.mark_buildings_dirty()
 	_refresh_selected_object_after_render()
 
 

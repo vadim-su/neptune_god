@@ -41,6 +41,8 @@ use sim_core::worldgen::{
     WorldGenerator, default_profile,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
+use std::thread;
 
 const SIM_TICKS_PER_SECOND: f64 = 60.0;
 
@@ -1089,6 +1091,119 @@ unsafe impl ExtensionLibrary for NeptuneGodotExtension {}
 
 #[derive(GodotClass)]
 #[class(base=RefCounted)]
+pub struct NeptuneChunkTileProvider {
+    configured: bool,
+    worldgen_profile: WorldGenProfile,
+    next_chunk_job_id: i64,
+    chunk_jobs: BTreeMap<i64, Arc<Mutex<Option<ChunkTileJobResult>>>>,
+    base: Base<RefCounted>,
+}
+
+struct ChunkTileJobResult {
+    terrain_tiles: Vec<sim_core::worldgen::GeneratedTerrainTile>,
+    resources: BTreeMap<TilePos, (String, u32)>,
+    core_min: TilePos,
+    core_max: TilePos,
+}
+
+#[godot_api]
+impl IRefCounted for NeptuneChunkTileProvider {
+    fn init(base: Base<RefCounted>) -> Self {
+        Self {
+            configured: false,
+            worldgen_profile: default_profile(),
+            next_chunk_job_id: 1,
+            chunk_jobs: BTreeMap::new(),
+            base,
+        }
+    }
+}
+
+#[godot_api]
+impl NeptuneChunkTileProvider {
+    #[func]
+    pub fn configure_worldgen(&mut self, resource_rows: VarArray, worldgen_rows: VarArray) -> bool {
+        if resource_rows.is_empty() && worldgen_rows.is_empty() {
+            self.worldgen_profile = default_profile();
+            self.configured = true;
+            self.next_chunk_job_id = 1;
+            self.chunk_jobs.clear();
+            return true;
+        }
+        match build_worldgen_profile_from_rows(&resource_rows, &worldgen_rows) {
+            Ok(profile) => {
+                self.worldgen_profile = profile;
+                self.configured = true;
+                self.next_chunk_job_id = 1;
+                self.chunk_jobs.clear();
+                true
+            }
+            Err(error) => {
+                godot_error!("failed to configure render worldgen provider: {error}");
+                false
+            }
+        }
+    }
+
+    #[func]
+    pub fn start_chunk_tiles_job(&mut self, chunk_x: i32, chunk_y: i32, margin: i32) -> i64 {
+        if !self.configured {
+            godot_error!(
+                "NeptuneChunkTileProvider.start_chunk_tiles_job called before configure_worldgen()"
+            );
+            return -1;
+        }
+
+        let job_id = self.next_chunk_job_id;
+        self.next_chunk_job_id += 1;
+        let result_slot = Arc::new(Mutex::new(None));
+        let thread_result_slot = Arc::clone(&result_slot);
+        let profile = self.worldgen_profile.clone();
+        thread::spawn(move || {
+            let result = generate_chunk_tile_job(profile, chunk_x, chunk_y, margin);
+            if let Ok(mut slot) = thread_result_slot.lock() {
+                *slot = Some(result);
+            }
+        });
+        self.chunk_jobs.insert(job_id, result_slot);
+        job_id
+    }
+
+    #[func]
+    pub fn is_chunk_tiles_job_ready(&self, job_id: i64) -> bool {
+        let Some(result_slot) = self.chunk_jobs.get(&job_id) else {
+            return false;
+        };
+        result_slot
+            .lock()
+            .map(|slot| slot.is_some())
+            .unwrap_or(false)
+    }
+
+    #[func]
+    pub fn take_chunk_tiles_job(&mut self, job_id: i64) -> VarArray {
+        let Some(result_slot) = self.chunk_jobs.get(&job_id) else {
+            return VarArray::new();
+        };
+        let Ok(mut slot) = result_slot.lock() else {
+            return VarArray::new();
+        };
+        let Some(result) = slot.take() else {
+            return VarArray::new();
+        };
+        drop(slot);
+        self.chunk_jobs.remove(&job_id);
+        chunk_tile_job_result_to_var_array(result)
+    }
+
+    #[func]
+    pub fn discard_chunk_tiles_job(&mut self, job_id: i64) {
+        self.chunk_jobs.remove(&job_id);
+    }
+}
+
+#[derive(GodotClass)]
+#[class(base=RefCounted)]
 pub struct NeptuneSim {
     world: SimWorld,
     configured: bool,
@@ -1314,45 +1429,6 @@ impl NeptuneSim {
     }
 
     #[func]
-    pub fn chunk_tiles(&mut self, chunk_x: i32, chunk_y: i32) -> VarArray {
-        self.chunk_tiles_with_margin(chunk_x, chunk_y, 0)
-    }
-
-    #[func]
-    pub fn chunk_tiles_with_margin(&mut self, chunk_x: i32, chunk_y: i32, margin: i32) -> VarArray {
-        if !self.ensure_configured("chunk_tiles_with_margin") {
-            return VarArray::new();
-        }
-
-        let chunk = ChunkPos::new(chunk_x, chunk_y);
-        if !self.generated_chunks.contains(&chunk) {
-            self.ensure_generated_rect(
-                chunk_min_tile(chunk).x,
-                chunk_min_tile(chunk).y,
-                chunk_max_tile(chunk).x,
-                chunk_max_tile(chunk).y,
-            );
-        }
-
-        let margin = margin.max(0);
-        let core_min = chunk_min_tile(chunk);
-        let core_max = chunk_max_tile(chunk);
-        let min = TilePos::new(core_min.x - margin, core_min.y - margin);
-        let max = TilePos::new(core_max.x + margin, core_max.y + margin);
-
-        let generator = WorldGenerator::new(DEFAULT_WORLD_SEED, self.worldgen_profile.clone());
-        let generated = generator.generate_rect(min, max);
-        let resources = self
-            .world
-            .resource_tiles_in_rect(core_min, core_max)
-            .into_iter()
-            .map(|(pos, item, amount)| (pos, (item, amount)))
-            .collect::<BTreeMap<_, _>>();
-
-        generated_tiles_to_var_array(&generated.terrain_tiles, resources, core_min, core_max)
-    }
-
-    #[func]
     pub fn map_tile_count(&self) -> i64 {
         let width = i64::from(self.map_max.x - self.map_min.x + 1).max(0);
         let height = i64::from(self.map_max.y - self.map_min.y + 1).max(0);
@@ -1572,6 +1648,55 @@ fn chunk_max_tile(chunk: ChunkPos) -> TilePos {
     TilePos::new(
         chunk.x * CHUNK_SIZE + CHUNK_SIZE - 1,
         chunk.y * CHUNK_SIZE + CHUNK_SIZE - 1,
+    )
+}
+
+fn generate_chunk_tile_job(
+    worldgen_profile: WorldGenProfile,
+    chunk_x: i32,
+    chunk_y: i32,
+    margin: i32,
+) -> ChunkTileJobResult {
+    let chunk = ChunkPos::new(chunk_x, chunk_y);
+    let margin = margin.max(0);
+    let core_min = chunk_min_tile(chunk);
+    let core_max = chunk_max_tile(chunk);
+    let min = TilePos::new(core_min.x - margin, core_min.y - margin);
+    let max = TilePos::new(core_max.x + margin, core_max.y + margin);
+    let generator = WorldGenerator::new(DEFAULT_WORLD_SEED, worldgen_profile);
+    let generated = generator.generate_rect(min, max);
+    let resources = generated
+        .resource_tiles
+        .iter()
+        .filter_map(|resource| {
+            if resource.pos.x < core_min.x
+                || resource.pos.x > core_max.x
+                || resource.pos.y < core_min.y
+                || resource.pos.y > core_max.y
+            {
+                return None;
+            }
+            Some((
+                resource.pos,
+                (resource.item_def_id.clone(), resource.amount),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    ChunkTileJobResult {
+        terrain_tiles: generated.terrain_tiles,
+        resources,
+        core_min,
+        core_max,
+    }
+}
+
+fn chunk_tile_job_result_to_var_array(result: ChunkTileJobResult) -> VarArray {
+    generated_tiles_to_var_array(
+        &result.terrain_tiles,
+        result.resources,
+        result.core_min,
+        result.core_max,
     )
 }
 
