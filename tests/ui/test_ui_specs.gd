@@ -539,6 +539,21 @@ func test_map_overlay_fullscreen_contract_has_player_dot_label_and_detailed_zoom
 	assert_true(overlay.detailed_world_visible())
 
 
+func test_map_overlay_player_marker_keeps_screen_radius_across_zoom_levels() -> void:
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+
+	var zoomed_out_radius: float = overlay.player_marker_radius_for_tests(overlay.MIN_PIXELS_PER_TILE)
+	var normal_radius: float = overlay.player_marker_radius_for_tests(10.0)
+	var transition_radius: float = overlay.player_marker_radius_for_tests(overlay.DETAILED_WORLD_PIXELS_PER_TILE)
+	var zoomed_in_radius: float = overlay.player_marker_radius_for_tests(overlay.MAX_PIXELS_PER_TILE)
+
+	assert_eq(zoomed_out_radius, normal_radius)
+	assert_eq(normal_radius, transition_radius)
+	assert_eq(transition_radius, zoomed_in_radius)
+	assert_true(zoomed_out_radius >= 5.0)
+
+
 func test_map_overlay_repeated_fullscreen_open_does_not_request_redraw() -> void:
 	var overlay = autofree(MapOverlayScript.new())
 	overlay.configure_fullscreen()
@@ -1881,6 +1896,35 @@ func test_map_overlay_hovered_resource_vein_reuses_cache_until_chunk_revision_ch
 	var refreshed_vein: Dictionary = overlay.hovered_resource_vein_for_tests(Vector2i(1, 1))
 
 	assert_true(refreshed_vein.is_empty())
+
+
+func test_map_overlay_hovered_resource_lookup_is_reused_across_cursor_tiles() -> void:
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	overlay._current_visible_rect = Rect2i(Vector2i.ZERO, Vector2i(6, 6))
+	overlay._map_chunk_entries = {
+		"0:0": {
+			"bounds": Rect2i(Vector2i.ZERO, Vector2i(6, 6)),
+			"tiles": [
+				{"x": 1, "y": 1, "terrain": "ground", "resource": "iron_ore", "amount": 10, "render": true},
+				{"x": 2, "y": 1, "terrain": "ground", "resource": "iron_ore", "amount": 15, "render": true},
+				{"x": 4, "y": 4, "terrain": "ground", "resource": "copper_ore", "amount": 20, "render": true},
+			],
+		},
+	}
+	overlay._target_map_chunk_keys = {"0:0": true}
+	overlay._map_chunk_entries_revision += 1
+
+	var first_vein: Dictionary = overlay.hovered_resource_vein_for_tests(Vector2i(1, 1))
+	var second_vein: Dictionary = overlay.hovered_resource_vein_for_tests(Vector2i(4, 4))
+	overlay.refresh_resource_selection()
+	var same_tile_after_mouse_motion: Dictionary = overlay.hovered_resource_vein_for_tests(Vector2i(4, 4))
+
+	assert_eq(int(first_vein["amount"]), 25)
+	assert_eq(int(second_vein["amount"]), 20)
+	assert_eq(int(same_tile_after_mouse_motion["amount"]), 20)
+	assert_eq(overlay.query_tiles_cache_rebuild_count_for_tests(), 1)
+	assert_eq(overlay.visible_resource_lookup_cache_rebuild_count_for_tests(), 1)
 
 
 func test_map_overlay_hovered_resource_outside_visible_rect_skips_query_tile_cache() -> void:

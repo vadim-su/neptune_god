@@ -17,6 +17,7 @@ const MAX_MAP_TEXTURE_JOBS_STARTED_PER_FRAME := 1
 const MAX_ACTIVE_MAP_TEXTURE_TASKS := 1
 const MAX_CHUNK_TEXTURE_UPLOADS_PER_FRAME := 1
 const MAX_RETAINED_MAP_CHUNK_TEXTURES := 128
+const PLAYER_MARKER_RADIUS := 6.0
 const MAP_TEXTURE_BACKGROUND := Color(0.0, 0.0, 0.0, 0.0)
 const MAP_BACKGROUND_COLOR := Color(0.028, 0.038, 0.034, 1.0)
 const FOGGED_TILE_BLEND := 0.58
@@ -222,12 +223,20 @@ var _query_tiles_cache: Array = []
 var _query_tiles_cache_rect := Rect2i()
 var _query_tiles_cache_revision := -1
 var _query_tiles_cache_rebuild_count := 0
+var _visible_resource_lookup_cache := {}
+var _visible_resource_lookup_cache_rect := Rect2i()
+var _visible_resource_lookup_cache_revision := -1
+var _visible_resource_lookup_cache_rebuild_count := 0
 var _hovered_resource_vein_cache_key := ""
 var _hovered_resource_vein_cache: Dictionary = {}
 
 
 static func collect_resource_vein(start: Vector2i, tiles: Array, visible_rect: Rect2i) -> Dictionary:
 	var lookup := _visible_resource_lookup(tiles, visible_rect)
+	return collect_resource_vein_from_lookup(start, lookup)
+
+
+static func collect_resource_vein_from_lookup(start: Vector2i, lookup: Dictionary) -> Dictionary:
 	if not lookup.has(start):
 		return {}
 
@@ -572,6 +581,10 @@ func hovered_resource_vein_for_tests(hovered: Vector2i) -> Dictionary:
 	return _resource_vein_for_hovered_tile(hovered)
 
 
+func player_marker_radius_for_tests(_tile_scale: float) -> float:
+	return PLAYER_MARKER_RADIUS
+
+
 func resource_hover_suspended_for_tests() -> bool:
 	return _resource_hover_suspended
 
@@ -594,6 +607,10 @@ func building_grid_chunk_cache_rebuild_count_for_tests() -> int:
 
 func query_tiles_cache_rebuild_count_for_tests() -> int:
 	return _query_tiles_cache_rebuild_count
+
+
+func visible_resource_lookup_cache_rebuild_count_for_tests() -> int:
+	return _visible_resource_lookup_cache_rebuild_count
 
 
 func process_map_texture_jobs_for_tests() -> void:
@@ -1362,7 +1379,7 @@ func _draw_player_marker(bounds: Rect2i, tile_scale: float) -> void:
 	if not bounds.has_point(player_tile):
 		return
 	var center := _tile_to_local(player_tile, bounds, tile_scale, true) + Vector2(tile_scale, tile_scale) * 0.5
-	var radius: float = clampf(tile_scale * 0.46, 3.0, 7.0)
+	var radius := PLAYER_MARKER_RADIUS
 	draw_circle(center, radius, Color(0.12, 0.92, 1.0, 1.0))
 	if is_fullscreen_open():
 		var font := get_theme_default_font()
@@ -1415,12 +1432,29 @@ func _resource_vein_for_hovered_tile(hovered: Vector2i) -> Dictionary:
 		_hovered_resource_vein_cache = {}
 		_hovered_resource_vein_cache_key = cache_key
 		return _hovered_resource_vein_cache
-	var query_tiles := _tiles
-	if query_tiles.is_empty():
-		query_tiles = _tiles_for_query_rect(_current_visible_rect)
-	_hovered_resource_vein_cache = collect_resource_vein(hovered, query_tiles, _current_visible_rect)
+	_hovered_resource_vein_cache = collect_resource_vein_from_lookup(
+		hovered,
+		_visible_resource_lookup_for_query_rect(_current_visible_rect)
+	)
 	_hovered_resource_vein_cache_key = cache_key
 	return _hovered_resource_vein_cache
+
+
+func _visible_resource_lookup_for_query_rect(query_rect: Rect2i) -> Dictionary:
+	if (
+		_visible_resource_lookup_cache_revision == _map_chunk_entries_revision
+		and _visible_resource_lookup_cache_rect == query_rect
+	):
+		return _visible_resource_lookup_cache
+
+	var query_tiles := _tiles
+	if query_tiles.is_empty():
+		query_tiles = _tiles_for_query_rect(query_rect)
+	_visible_resource_lookup_cache = _visible_resource_lookup(query_tiles, query_rect)
+	_visible_resource_lookup_cache_rect = query_rect
+	_visible_resource_lookup_cache_revision = _map_chunk_entries_revision
+	_visible_resource_lookup_cache_rebuild_count += 1
+	return _visible_resource_lookup_cache
 
 
 func _hovered_resource_vein_key(hovered: Vector2i) -> String:
@@ -1428,7 +1462,6 @@ func _hovered_resource_vein_key(hovered: Vector2i) -> String:
 		hovered,
 		_current_visible_rect,
 		_map_chunk_entries_revision,
-		_resource_selection_revision,
 	]))
 
 
