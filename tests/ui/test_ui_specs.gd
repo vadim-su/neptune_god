@@ -33,6 +33,28 @@ func test_dev_console_controller_handles_status_items_and_unknown_commands() -> 
 	assert_eq(refresh_calls.size(), 0)
 
 
+func test_dev_console_controller_ignores_blank_commands() -> void:
+	var console = add_child_autoqfree(FakeDevConsole.new())
+	var sim := FakeDevConsoleSim.new()
+	var inventory = add_child_autoqfree(FakeInventoryWindow.new())
+	var controller = autofree(DevConsoleControllerScript.new())
+	controller.setup(
+		console,
+		sim,
+		inventory,
+		func() -> void:
+			pass,
+		func() -> Dictionary:
+			return {}
+	)
+
+	controller.submit_command("")
+	controller.submit_command("   ")
+
+	assert_eq(console.outputs, [])
+	assert_eq(sim.give_calls.size(), 0)
+
+
 func test_dev_console_help_lists_commands_as_vertical_bullets() -> void:
 	var console = add_child_autoqfree(FakeDevConsole.new())
 	var sim := FakeDevConsoleSim.new()
@@ -54,6 +76,30 @@ func test_dev_console_help_lists_commands_as_vertical_bullets() -> void:
 	assert_true(console.outputs.has("- give <item> <amount> - Add an item stack to the player inventory."))
 	assert_true(console.outputs.has("- teleport <x> <z> - Move the player to world coordinates."))
 	assert_false((console.outputs[1] as String).begins_with("  "))
+
+
+func test_dev_console_clear_command_removes_scrollback() -> void:
+	var console = add_child_autoqfree(FakeDevConsole.new())
+	var sim := FakeDevConsoleSim.new()
+	var inventory = add_child_autoqfree(FakeInventoryWindow.new())
+	var controller = autofree(DevConsoleControllerScript.new())
+	controller.setup(
+		console,
+		sim,
+		inventory,
+		func() -> void:
+			pass,
+		func() -> Dictionary:
+			return {}
+	)
+
+	controller.submit_command("items")
+	assert_gt(console.outputs.size(), 0)
+
+	controller.submit_command("clear")
+
+	assert_eq(console.outputs, [])
+	assert_eq(console.clear_count, 1)
 
 
 func test_dev_console_controller_give_command_refreshes_open_inventory() -> void:
@@ -81,6 +127,34 @@ func test_dev_console_controller_give_command_refreshes_open_inventory() -> void
 	assert_eq(console.outputs[0], "Added iron_ore x3")
 	assert_eq(console.outputs[1], "Could not add missing x2")
 	assert_eq(refresh_calls.size(), 1)
+
+
+func test_dev_console_give_command_is_case_insensitive_and_clamps_invalid_amount() -> void:
+	var console = add_child_autoqfree(FakeDevConsole.new())
+	var sim := FakeDevConsoleSim.new()
+	var inventory = add_child_autoqfree(FakeInventoryWindow.new())
+	var controller = autofree(DevConsoleControllerScript.new())
+	controller.setup(
+		console,
+		sim,
+		inventory,
+		func() -> void:
+			pass,
+		func() -> Dictionary:
+			return {}
+	)
+
+	controller.submit_command("GiVe iron_ore nope")
+	controller.submit_command("GIVE iron_ore -20")
+
+	assert_eq(sim.give_calls, [
+		{"item": "iron_ore", "amount": 1},
+		{"item": "iron_ore", "amount": 1},
+	])
+	assert_eq(console.outputs, [
+		"Added iron_ore x1",
+		"Added iron_ore x1",
+	])
 
 
 func test_dev_console_controller_teleports_player() -> void:
@@ -111,6 +185,26 @@ func test_dev_console_controller_teleports_player() -> void:
 	assert_true(console.completions.has("tp"))
 
 
+func test_dev_console_teleport_reports_when_player_callback_is_missing() -> void:
+	var console = add_child_autoqfree(FakeDevConsole.new())
+	var sim := FakeDevConsoleSim.new()
+	var inventory = add_child_autoqfree(FakeInventoryWindow.new())
+	var controller = autofree(DevConsoleControllerScript.new())
+	controller.setup(
+		console,
+		sim,
+		inventory,
+		func() -> void:
+			pass,
+		func() -> Dictionary:
+			return {}
+	)
+
+	controller.submit_command("TP 2 3")
+
+	assert_eq(console.outputs, ["Teleport is not available."])
+
+
 func test_dev_console_controller_accepts_registered_command_providers() -> void:
 	var console = add_child_autoqfree(FakeDevConsole.new())
 	var sim := FakeDevConsoleSim.new()
@@ -136,6 +230,79 @@ func test_dev_console_controller_accepts_registered_command_providers() -> void:
 	assert_true(console.completions.has("ping"))
 	assert_true(console.completions.has("pong"))
 	assert_true(console.completions.has("provider_value"))
+
+
+func test_dev_console_commands_provide_their_own_completions() -> void:
+	var console = add_child_autoqfree(FakeDevConsole.new())
+	var sim := FakeDevConsoleSim.new()
+	var inventory = add_child_autoqfree(FakeInventoryWindow.new())
+	var controller = autofree(DevConsoleControllerScript.new())
+	controller.setup(
+		console,
+		sim,
+		inventory,
+		func() -> void:
+			pass,
+		func() -> Dictionary:
+			return {}
+	)
+
+	assert_true(controller.register_command_provider(FakeDevConsoleObjectCommandProvider.new()))
+
+	controller.submit_command("op alpha")
+
+	assert_eq(console.outputs, ["object:op alpha"])
+	assert_true(console.completions.has("object_ping"))
+	assert_true(console.completions.has("op"))
+	assert_true(console.completions.has("object_value"))
+
+
+func test_dev_console_completions_are_unique_and_ignore_invalid_provider_values() -> void:
+	var console = add_child_autoqfree(FakeDevConsole.new())
+	var sim := FakeDevConsoleSim.new()
+	var inventory = add_child_autoqfree(FakeInventoryWindow.new())
+	var controller = autofree(DevConsoleControllerScript.new())
+	controller.setup(
+		console,
+		sim,
+		inventory,
+		func() -> void:
+			pass,
+		func() -> Dictionary:
+			return {}
+	)
+
+	assert_true(controller.register_command_provider(FakeDevConsoleOddCompletionProvider.new()))
+
+	assert_eq(console.completions.count("shared"), 1)
+	assert_true(console.completions.has("unique"))
+	assert_false(console.completions.has(""))
+	assert_false(console.completions.has("not-an-array"))
+
+
+func test_dev_console_register_command_rejects_invalid_specs() -> void:
+	var console = add_child_autoqfree(FakeDevConsole.new())
+	var sim := FakeDevConsoleSim.new()
+	var inventory = add_child_autoqfree(FakeInventoryWindow.new())
+	var controller = autofree(DevConsoleControllerScript.new())
+	controller.setup(
+		console,
+		sim,
+		inventory,
+		func() -> void:
+			pass,
+		func() -> Dictionary:
+			return {}
+	)
+	var before_completions: Array = console.completions.duplicate()
+
+	assert_false(controller.register_command({}))
+	assert_false(controller.register_command({"name": "broken"}))
+
+	controller.submit_command("broken")
+
+	assert_eq(console.completions, before_completions)
+	assert_eq(console.outputs, ["Unknown command 'broken'. Use 'help' for commands."])
 
 
 func test_inventory_controller_toggle_shows_inventory_with_selected_object_snapshot() -> void:

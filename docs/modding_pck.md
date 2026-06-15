@@ -148,32 +148,42 @@ Mods can register runtime dev console commands from their manifest:
 ```
 
 Each script must instantiate without arguments and expose
-`register_dev_console_commands(registry)`. Register commands with a callable
-that receives `(context, parts)`:
+`register_dev_console_commands(registry)`. Prefer registering command objects:
+the command owns its metadata, `execute(context, parts)`, and optional
+`complete(context)`.
 
 ```gdscript
 extends RefCounted
 
 func register_dev_console_commands(registry: RefCounted) -> void:
-	registry.register_command(
-		"spawn_tin",
-		"Adds tin ore to the player inventory.",
-		"spawn_tin <amount>",
-		Callable(self, "_execute_spawn_tin"),
-		Callable(self, "_complete_spawn_tin")
-	)
+	registry.register_command_object(SpawnTinCommand.new())
 
-func _execute_spawn_tin(context: RefCounted, parts: PackedStringArray) -> void:
-	var amount := 1
-	if parts.size() >= 2:
-		amount = max(1, int(parts[1]))
-	if context.sim.give_item("tin_ore", amount):
-		context.append_output("Added tin_ore x%d" % amount)
-		context.refresh_inventory_if_open()
+class SpawnTinCommand:
+	extends RefCounted
 
-func _complete_spawn_tin(_context: RefCounted) -> Array:
-	return ["tin_ore"]
+	func command_name() -> String:
+		return "spawn_tin"
+
+	func command_description() -> String:
+		return "Adds tin ore to the player inventory."
+
+	func command_usage() -> String:
+		return "spawn_tin <amount>"
+
+	func execute(context: RefCounted, parts: PackedStringArray) -> void:
+		var amount := 1
+		if parts.size() >= 2:
+			amount = max(1, int(parts[1]))
+		if context.sim.give_item("tin_ore", amount):
+			context.append_output("Added tin_ore x%d" % amount)
+			context.refresh_inventory_if_open()
+
+	func complete(_context: RefCounted) -> Array:
+		return ["tin_ore"]
 ```
+
+`registry.register_command(...)` is still available as a compatibility helper,
+but it wraps the callables into a command object internally.
 
 Building rows keep UI fields at the top level and put simulation fields under
 `sim`:

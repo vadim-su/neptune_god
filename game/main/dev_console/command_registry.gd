@@ -1,6 +1,55 @@
 extends RefCounted
 class_name DevConsoleCommandRegistry
 
+class CallableCommand:
+	extends RefCounted
+
+	var _name := ""
+	var _description := ""
+	var _usage := ""
+	var _execute := Callable()
+	var _complete := Callable()
+	var _aliases: Array = []
+
+	func setup(
+		name: String,
+		description: String,
+		usage: String,
+		execute: Callable,
+		complete: Callable = Callable(),
+		aliases: Array = []
+	) -> void:
+		_name = name
+		_description = description
+		_usage = usage
+		_execute = execute
+		_complete = complete
+		_aliases = aliases.duplicate()
+
+	func command_name() -> String:
+		return _name
+
+	func command_description() -> String:
+		return _description
+
+	func command_usage() -> String:
+		return _usage
+
+	func command_aliases() -> Array:
+		return _aliases.duplicate()
+
+	func execute(context: RefCounted, parts: PackedStringArray) -> void:
+		_execute.call(context, parts)
+
+	func complete(context: RefCounted) -> Array:
+		if not _complete.is_valid():
+			return []
+		var values: Variant = _complete.call(context)
+		if values is Array:
+			return values
+		return []
+
+
 var _commands := {}
 var _aliases := {}
 var _providers: Array = []
@@ -14,20 +63,23 @@ func register_command(
 	completions: Callable = Callable(),
 	aliases: Array = []
 ) -> bool:
-	var command_name := name.strip_edges().to_lower()
-	if command_name.is_empty() or not execute.is_valid():
+	if name.strip_edges().is_empty() or not execute.is_valid():
+		return false
+	var command := CallableCommand.new()
+	command.setup(name, description, usage, execute, completions, aliases)
+	return register_command_object(command)
+
+
+func register_command_object(command: Variant) -> bool:
+	if not _is_valid_command(command):
 		return false
 
-	_commands[command_name] = {
-		"name": command_name,
-		"description": description,
-		"usage": usage,
-		"execute": execute,
-		"completions": completions,
-		"aliases": aliases.duplicate(),
-	}
+	var command_name := _command_name(command)
+	if command_name.is_empty():
+		return false
 
-	for raw_alias: Variant in aliases:
+	_commands[command_name] = command
+	for raw_alias: Variant in _command_aliases(command):
 		var alias := str(raw_alias).strip_edges().to_lower()
 		if not alias.is_empty():
 			_aliases[alias] = command_name
@@ -35,7 +87,53 @@ func register_command(
 	return true
 
 
+func _is_valid_command(command: Variant) -> bool:
+	return (
+		command != null
+		and command.has_method("command_name")
+		and command.has_method("execute")
+	)
+
+
+func _command_name(command: Variant) -> String:
+	return str(command.command_name()).strip_edges().to_lower()
+
+
+func _command_description(command: Variant) -> String:
+	if command.has_method("command_description"):
+		return str(command.command_description())
+	return ""
+
+
+func _command_usage(command: Variant) -> String:
+	if command.has_method("command_usage"):
+		var usage := str(command.command_usage())
+		if not usage.is_empty():
+			return usage
+	return _command_name(command)
+
+
+func _command_aliases(command: Variant) -> Array:
+	if not command.has_method("command_aliases"):
+		return []
+	var aliases: Variant = command.command_aliases()
+	if aliases is Array:
+		return aliases
+	return []
+
+
+func _command_complete(command: Variant, context: RefCounted) -> Array:
+	if not command.has_method("complete"):
+		return []
+	var values: Variant = command.complete(context)
+	if values is Array:
+		return values
+	return []
+
+
 func register_command_spec(spec: Dictionary) -> bool:
+	if spec.has("command"):
+		return register_command_object(spec.get("command"))
 	return register_command(
 		str(spec.get("name", "")),
 		str(spec.get("description", "")),
@@ -65,9 +163,8 @@ func execute_line(context: RefCounted, line: String) -> void:
 		context.append_output("Unknown command '%s'. Use 'help' for commands." % str(parts[0]))
 		return
 
-	var command: Dictionary = _commands[command_name]
-	var execute: Callable = command["execute"]
-	execute.call(context, parts)
+	var command: Variant = _commands[command_name]
+	command.execute(context, parts)
 
 
 func completion_values(context: RefCounted) -> Array:
@@ -77,14 +174,8 @@ func completion_values(context: RefCounted) -> Array:
 			values.append(alias)
 
 	for command_name: String in command_names():
-		var command: Dictionary = _commands[command_name]
-		var completions: Callable = command.get("completions", Callable())
-		if not completions.is_valid():
-			continue
-		var raw_values: Variant = completions.call(context)
-		if not raw_values is Array:
-			continue
-		for raw_value: Variant in raw_values:
+		var command: Variant = _commands[command_name]
+		for raw_value: Variant in _command_complete(command, context):
 			var value := str(raw_value)
 			if not value.is_empty() and not values.has(value):
 				values.append(value)
@@ -100,9 +191,9 @@ func command_names() -> Array:
 func command_summaries() -> Array[String]:
 	var lines: Array[String] = []
 	for command_name: String in command_names():
-		var command: Dictionary = _commands[command_name]
-		var usage := str(command.get("usage", command_name))
-		var description := str(command.get("description", ""))
+		var command: Variant = _commands[command_name]
+		var usage := _command_usage(command)
+		var description := _command_description(command)
 		if description.is_empty():
 			lines.append(usage)
 		else:

@@ -7,6 +7,8 @@ const HotbarScript := preload("res://game/ui/hotbar.gd")
 const InventorySlotScene := preload("res://game/ui/inventory_slot.tscn")
 const MapOverlayScript := preload("res://game/ui/map_overlay.gd")
 const DevConsoleControllerScript := preload("res://game/main/dev_console_controller.gd")
+const DevConsoleCommandContextScript := preload("res://game/main/dev_console/command_context.gd")
+const DevConsoleCommandRegistryScript := preload("res://game/main/dev_console/command_registry.gd")
 const InventoryControllerScript := preload("res://game/main/inventory_controller.gd")
 const MapOverlayControllerScript := preload("res://game/main/map_overlay_controller.gd")
 const MainScript := preload("res://game/main/main.gd")
@@ -156,6 +158,67 @@ class FakeDevConsoleCommandProvider:
 
 	func _complete_ping(_context: RefCounted) -> Array:
 		return ["provider_value"]
+
+
+class FakeDevConsoleObjectCommand:
+	extends RefCounted
+
+	func command_name() -> String:
+		return "object_ping"
+
+	func command_description() -> String:
+		return "Object command provider hook."
+
+	func command_usage() -> String:
+		return "object_ping"
+
+	func command_aliases() -> Array:
+		return ["op"]
+
+	func execute(context: RefCounted, parts: PackedStringArray) -> void:
+		context.append_output("object:%s" % " ".join(parts))
+
+	func complete(_context: RefCounted) -> Array:
+		return ["object_value"]
+
+
+class FakeDevConsoleObjectCommandProvider:
+	extends RefCounted
+
+	func register_dev_console_commands(registry: RefCounted) -> void:
+		registry.register_command_object(FakeDevConsoleObjectCommand.new())
+
+
+class FakeDevConsoleOddCompletionProvider:
+	extends RefCounted
+
+	func register_dev_console_commands(registry: RefCounted) -> void:
+		registry.register_command(
+			"alpha",
+			"Alpha command.",
+			"alpha",
+			Callable(self, "_execute_alpha"),
+			Callable(self, "_complete_alpha")
+		)
+		registry.register_command(
+			"beta",
+			"Beta command.",
+			"beta",
+			Callable(self, "_execute_beta"),
+			Callable(self, "_complete_beta")
+		)
+
+	func _execute_alpha(context: RefCounted, _parts: PackedStringArray) -> void:
+		context.append_output("alpha")
+
+	func _execute_beta(context: RefCounted, _parts: PackedStringArray) -> void:
+		context.append_output("beta")
+
+	func _complete_alpha(_context: RefCounted) -> Array:
+		return ["shared", "shared", "", "unique"]
+
+	func _complete_beta(_context: RefCounted) -> String:
+		return "not-an-array"
 
 
 class FakeInventoryWindow:
