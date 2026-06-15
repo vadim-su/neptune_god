@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://game/main/player_zone_overlay_controller.gd" id="1_player_zone_overlay"]
+
+[node name="PlayerZoneOverlay" type="Node3D"]
+script = ExtResource("1_player_zone_overlay")
+
+[node name="ZoneMesh" type="MeshInstance3D" parent="."]
+unique_name_in_owner = true

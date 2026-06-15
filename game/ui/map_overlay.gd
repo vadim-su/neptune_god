@@ -197,6 +197,7 @@ var _building_grid_chunk_cache := {}
 var _building_grid_chunk_building_key_cache := {}
 var _building_grid_chunk_cache_rebuild_count := 0
 var _resource_selection_revision := 0
+var _resource_hover_suspended := false
 var _map_chunk_entries := {}
 var _target_map_chunk_keys := {}
 var _pending_map_chunk_syncs: Array[Dictionary] = []
@@ -336,6 +337,7 @@ func set_fullscreen_open(open: bool) -> void:
 		return
 	_fullscreen_open = open
 	visible = open
+	_resource_hover_suspended = false
 	if open and not _center_initialized:
 		center_on_player()
 	_request_redraw()
@@ -470,6 +472,7 @@ func drag_by(screen_delta: Vector2) -> void:
 		center_delta.y = -center_delta.y
 	_map_center += center_delta
 	_follow_player_in_fullscreen = false
+	_resource_hover_suspended = true
 	view_changed.emit()
 	_request_redraw()
 
@@ -508,6 +511,7 @@ func should_draw_map_markers() -> bool:
 
 
 func refresh_resource_selection() -> void:
+	_resource_hover_suspended = false
 	_resource_selection_revision += 1
 	if visible:
 		_request_redraw()
@@ -566,6 +570,10 @@ func uploaded_map_chunk_image_for_tests(chunk_key: String) -> Image:
 
 func hovered_resource_vein_for_tests(hovered: Vector2i) -> Dictionary:
 	return _resource_vein_for_hovered_tile(hovered)
+
+
+func resource_hover_suspended_for_tests() -> bool:
+	return _resource_hover_suspended
 
 
 func buildings_key_compute_count_for_tests() -> int:
@@ -1370,6 +1378,8 @@ func _draw_player_marker(bounds: Rect2i, tile_scale: float) -> void:
 
 
 func _draw_hovered_resource_vein(bounds: Rect2i, tile_scale: float) -> void:
+	if _resource_hover_suspended:
+		return
 	var hovered := _local_to_tile(get_local_mouse_position(), bounds, tile_scale, true)
 	if not bounds.has_point(hovered):
 		return
@@ -1396,6 +1406,8 @@ func _draw_hovered_resource_vein(bounds: Rect2i, tile_scale: float) -> void:
 
 
 func _resource_vein_for_hovered_tile(hovered: Vector2i) -> Dictionary:
+	if _resource_hover_suspended:
+		return {}
 	var cache_key := _hovered_resource_vein_key(hovered)
 	if _hovered_resource_vein_cache_key == cache_key:
 		return _hovered_resource_vein_cache
@@ -1577,12 +1589,17 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseMotion:
 		handle_fullscreen_mouse_motion(event)
-	elif event is InputEventMouseButton and event.pressed:
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			zoom_by(1.25)
-			accept_event()
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			zoom_by(0.80)
+	elif event is InputEventMouseButton:
+		if event.pressed:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				zoom_by(1.25)
+				accept_event()
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				zoom_by(0.80)
+				accept_event()
+		elif event.button_index == MOUSE_BUTTON_LEFT:
+			_resource_hover_suspended = false
+			refresh_resource_selection()
 			accept_event()
 
 
@@ -1590,7 +1607,9 @@ func handle_fullscreen_mouse_motion(event: InputEventMouseMotion) -> void:
 	if not is_fullscreen_open():
 		return
 	if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+		_resource_hover_suspended = true
 		drag_by(event.relative)
 	else:
+		_resource_hover_suspended = false
 		refresh_resource_selection()
 	accept_event()

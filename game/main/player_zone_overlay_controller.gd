@@ -1,4 +1,4 @@
-extends RefCounted
+extends Node3D
 class_name PlayerZoneOverlayController
 
 const PLAYER_ZONE_RADIUS := 12.0
@@ -6,18 +6,31 @@ const PLAYER_ZONE_Y := 0.045
 
 var player: Node3D
 var visible_provider: Callable
-var overlay: MeshInstance3D
+@onready var overlay: MeshInstance3D = %ZoneMesh
 
 
-func setup(parent: Node, player_node: Node3D, should_show_overlay: Callable) -> void:
+func _ready() -> void:
+	_configure_overlay()
+
+
+func setup(player_node: Node3D, should_show_overlay: Callable) -> void:
 	player = player_node
 	visible_provider = should_show_overlay
-	overlay = MeshInstance3D.new()
-	overlay.name = "PlayerZoneOverlay"
+	_configure_overlay()
+	update()
+
+
+func _process(_delta: float) -> void:
+	update()
+
+
+func _configure_overlay() -> void:
+	if overlay == null:
+		overlay = get_node_or_null("ZoneMesh") as MeshInstance3D
+	if overlay == null:
+		return
 	overlay.mesh = _player_zone_mesh()
 	overlay.material_override = _transparent_material(Color(0.28, 0.78, 1.0, 0.18))
-	parent.add_child(overlay)
-	update()
 
 
 func update() -> void:

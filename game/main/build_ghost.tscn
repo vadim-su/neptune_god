@@ -1,0 +1,7 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://game/main/build_ghost.gd" id="1_build_ghost"]
+
+[node name="BuildGhost" type="Node3D"]
+visible = false
+script = ExtResource("1_build_ghost")

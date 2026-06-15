@@ -10,6 +10,11 @@ const DevConsoleControllerScript := preload("res://game/main/dev_console_control
 const InventoryControllerScript := preload("res://game/main/inventory_controller.gd")
 const MapOverlayControllerScript := preload("res://game/main/map_overlay_controller.gd")
 const MainScript := preload("res://game/main/main.gd")
+const FpsCounterScript := preload("res://game/ui/fps_counter.gd")
+const FpsCounterScene := preload("res://game/ui/fps_counter.tscn")
+const PlayerZoneOverlayScene := preload("res://game/main/player_zone_overlay.tscn")
+const MapOverlayControllerScene := preload("res://game/main/map_overlay_controller.tscn")
+const BuildGhostScene := preload("res://game/main/build_ghost.tscn")
 
 const GROUP_CATEGORY := 0
 const GROUP_USAGE := 1
@@ -80,6 +85,13 @@ class SnapshotCountingEnvironment:
 
 	func chunk_snapshot_grid_size() -> Vector2i:
 		return chunk_grid_size
+
+
+class ToggleVisibilityProvider:
+	var visible := true
+
+	func should_show() -> bool:
+		return visible
 
 
 class FakeDevConsole:
@@ -770,6 +782,24 @@ func test_map_overlay_controller_skips_explored_snapshot_while_fullscreen_map_is
 	assert_eq(environment.last_explored_chunk_snapshot_rect, Rect2i(Vector2i(-3, -3), Vector2i(6, 6)))
 
 
+func test_map_overlay_controller_scene_owns_minimap_and_fullscreen_overlay_nodes() -> void:
+	var hud = add_child_autoqfree(Control.new())
+	var environment = add_child_autoqfree(SnapshotCountingEnvironment.new())
+	var controller = add_child_autoqfree(MapOverlayControllerScene.instantiate())
+	var player = add_child_autoqfree(Node3D.new())
+	var hotbar_control = autofree(Control.new())
+
+	controller.setup(hud, environment, NeptuneSim.new(), player, hotbar_control)
+
+	assert_eq(controller.minimap, controller.get_node("Minimap"))
+	assert_eq(controller.map_overlay, controller.get_node("MapOverlay"))
+	assert_eq(controller.minimap.get_parent(), controller)
+	assert_eq(controller.map_overlay.get_parent(), controller)
+	assert_false(controller.map_overlay.is_fullscreen_open())
+	assert_false(controller.map_overlay.visible)
+	assert_true(controller.minimap.visible)
+
+
 func test_map_overlay_controller_does_not_snapshot_when_fullscreen_view_changes() -> void:
 	var hud = add_child_autoqfree(Control.new())
 	var environment = add_child_autoqfree(SnapshotCountingEnvironment.new())
@@ -872,6 +902,42 @@ func test_main_keeps_hotbar_above_fullscreen_map_overlay() -> void:
 	main._keep_hotbar_above_map_overlay()
 
 	assert_gt(hotbar_control.z_index, fullscreen_overlay.z_index)
+
+
+func test_fps_counter_keeps_itself_above_fullscreen_map_overlay_without_blocking_input() -> void:
+	var fps_counter = autofree(FpsCounterScript.new())
+	var fullscreen_overlay = autofree(MapOverlayScript.new())
+	fullscreen_overlay.configure_fullscreen()
+
+	fps_counter.keep_above_control(fullscreen_overlay)
+
+	assert_gt(fps_counter.z_index, fullscreen_overlay.z_index)
+
+
+func test_main_scene_has_top_right_fps_label() -> void:
+	var main_scene = load("res://game/main/main.tscn").instantiate()
+	var fps_counter := main_scene.get_node("Hud/FpsCounter") as Control
+	var scene_fps_label := main_scene.get_node("Hud/FpsCounter/FpsLabel") as Label
+
+	assert_not_null(fps_counter)
+	assert_not_null(scene_fps_label)
+	assert_eq(scene_fps_label.text, "FPS: 0")
+	assert_eq(fps_counter.anchor_left, 1.0)
+	assert_eq(fps_counter.anchor_right, 1.0)
+	assert_eq(fps_counter.mouse_filter, Control.MOUSE_FILTER_IGNORE)
+	assert_eq(scene_fps_label.mouse_filter, Control.MOUSE_FILTER_IGNORE)
+
+	main_scene.free()
+
+
+func test_fps_counter_scene_updates_fps_label_text() -> void:
+	var fps_counter = autofree(FpsCounterScene.instantiate())
+	add_child(fps_counter)
+
+	fps_counter.update_value(59.6)
+
+	assert_eq(fps_counter.label.text, "FPS: 60")
+	assert_eq(FpsCounterScript.format_text(12.2), "FPS: 12")
 
 
 func test_fullscreen_map_left_mouse_drag_pans_without_following_player() -> void:
@@ -1002,6 +1068,54 @@ func test_player_zone_overlay_hides_while_fullscreen_map_is_open() -> void:
 	assert_false(main._should_show_player_zone_overlay())
 	overlay.set_fullscreen_open(false)
 	assert_true(main._should_show_player_zone_overlay())
+
+
+func test_player_zone_overlay_scene_follows_player_and_uses_visibility_provider() -> void:
+	var player = add_child_autoqfree(Node3D.new())
+	var visibility := ToggleVisibilityProvider.new()
+	var zone_overlay = add_child_autoqfree(PlayerZoneOverlayScene.instantiate())
+	player.global_position = Vector3(4.0, 0.0, -7.0)
+
+	zone_overlay.setup(player, Callable(visibility, "should_show"))
+	zone_overlay.update()
+
+	var zone_mesh := zone_overlay.get_node("ZoneMesh") as MeshInstance3D
+	assert_not_null(zone_mesh.mesh)
+	assert_true(zone_mesh.visible)
+	assert_eq(zone_mesh.global_position, Vector3(4.0, zone_overlay.PLAYER_ZONE_Y, -7.0))
+
+	visibility.visible = false
+	zone_overlay.update()
+
+	assert_false(zone_mesh.visible)
+
+
+func test_build_ghost_scene_renders_and_hides_preview_tiles() -> void:
+	var build_ghost = add_child_autoqfree(BuildGhostScene.instantiate())
+	var footprint: Array = [
+		{"x": 2, "y": -1},
+		{"x": 3, "y": -1},
+	]
+
+	build_ghost.show_footprint(footprint, true)
+
+	assert_true(build_ghost.visible)
+	assert_eq(build_ghost.get_child_count(), 2)
+	var first_tile := build_ghost.get_child(0) as MeshInstance3D
+	assert_eq(first_tile.position, Vector3(2.0, build_ghost.BUILD_GHOST_Y, -1.0))
+	assert_eq((first_tile.material_override as StandardMaterial3D).albedo_color, build_ghost.GHOST_VALID_COLOR)
+
+	build_ghost.show_footprint([{"x": 4, "y": 5}], false)
+
+	assert_eq(build_ghost.get_child_count(), 1)
+	var blocked_tile := build_ghost.get_child(0) as MeshInstance3D
+	assert_eq(blocked_tile.position, Vector3(4.0, build_ghost.BUILD_GHOST_Y, 5.0))
+	assert_eq((blocked_tile.material_override as StandardMaterial3D).albedo_color, build_ghost.GHOST_BLOCKED_COLOR)
+
+	build_ghost.hide_preview()
+
+	assert_false(build_ghost.visible)
+	assert_eq(build_ghost.get_child_count(), 0)
 
 
 func test_main_disables_3d_rendering_while_fullscreen_map_is_schematic() -> void:
@@ -1788,6 +1902,43 @@ func test_map_overlay_hovered_resource_outside_visible_rect_skips_query_tile_cac
 
 	assert_true(vein.is_empty())
 	assert_eq(overlay.query_tiles_cache_rebuild_count_for_tests(), 0)
+
+
+func test_map_overlay_drag_suspends_hovered_resource_vein_lookup_until_pointer_settles() -> void:
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	overlay.set_fullscreen_open(true)
+	overlay._current_visible_rect = Rect2i(Vector2i.ZERO, Vector2i(4, 4))
+	overlay._map_chunk_entries = {
+		"0:0": {
+			"bounds": Rect2i(Vector2i.ZERO, Vector2i(4, 4)),
+			"tiles": [
+				{"x": 1, "y": 1, "terrain": "ground", "resource": "iron_ore", "amount": 10, "render": true},
+			],
+		},
+	}
+	overlay._target_map_chunk_keys = {"0:0": true}
+	overlay._map_chunk_entries_revision += 1
+	var drag_event := InputEventMouseMotion.new()
+	drag_event.relative = Vector2(12.0, 0.0)
+	drag_event.button_mask = MOUSE_BUTTON_MASK_LEFT
+
+	overlay.handle_fullscreen_mouse_motion(drag_event)
+	var suspended_vein: Dictionary = overlay.hovered_resource_vein_for_tests(Vector2i(1, 1))
+
+	assert_true(suspended_vein.is_empty())
+	assert_true(overlay.resource_hover_suspended_for_tests())
+	assert_eq(overlay.query_tiles_cache_rebuild_count_for_tests(), 0)
+
+	var release_event := InputEventMouseButton.new()
+	release_event.button_index = MOUSE_BUTTON_LEFT
+	release_event.pressed = false
+	overlay._gui_input(release_event)
+	var settled_vein: Dictionary = overlay.hovered_resource_vein_for_tests(Vector2i(1, 1))
+
+	assert_false(overlay.resource_hover_suspended_for_tests())
+	assert_eq(int(settled_vein["amount"]), 10)
+	assert_eq(overlay.query_tiles_cache_rebuild_count_for_tests(), 1)
 
 
 func test_map_overlay_zoom_and_pan_reuse_chunk_textures_until_snapshot_changes() -> void:

@@ -9,11 +9,12 @@ const MachineWindowScene := preload("res://game/ui/machine_window.tscn")
 const CatalogSelectorScene := preload("res://game/ui/catalog_selector.tscn")
 const InventoryWindowScene := preload("res://game/ui/inventory_window.tscn")
 const DevConsoleScene := preload("res://game/ui/dev_console.tscn")
+const BuildGhostScene := preload("res://game/main/build_ghost.tscn")
 const CameraControllerScript := preload("res://game/main/camera_controller.gd")
 const DevConsoleControllerScript := preload("res://game/main/dev_console_controller.gd")
 const InventoryControllerScript := preload("res://game/main/inventory_controller.gd")
-const MapOverlayControllerScript := preload("res://game/main/map_overlay_controller.gd")
-const PlayerZoneOverlayControllerScript := preload("res://game/main/player_zone_overlay_controller.gd")
+const MapOverlayControllerScene := preload("res://game/main/map_overlay_controller.tscn")
+const PlayerZoneOverlayScene := preload("res://game/main/player_zone_overlay.tscn")
 const WorldStreamingControllerScript := preload("res://game/main/world_streaming_controller.gd")
 const HOTBAR_SELECTOR_OWNER_PREFIX := "hotbar:"
 
@@ -21,6 +22,7 @@ const HOTBAR_SELECTOR_OWNER_PREFIX := "hotbar:"
 @onready var player: PlayerController = %Player
 @onready var buildings_root: Node3D = %Buildings
 @onready var status_label: Label = %StatusLabel
+@onready var fps_counter: Control = %FpsCounter
 @onready var hotbar = %Hotbar
 @onready var environment: Node3D = $Environment
 
@@ -33,10 +35,7 @@ const STREAMING_PRELOAD_CHUNK_RING := 1
 const CAMERA_MIN_ELEVATION := deg_to_rad(30.0)
 const CAMERA_MAX_ELEVATION := deg_to_rad(76.0)
 const CAMERA_FAR_PADDING := 32.0
-const BUILD_GHOST_Y := 0.075
 const PLAYER_COLLISION_RADIUS := 0.32
-const GHOST_VALID_COLOR := Color(0.28, 0.78, 1.0, 0.38)
-const GHOST_BLOCKED_COLOR := Color(1.0, 0.22, 0.18, 0.38)
 
 enum BuildMode { NEUTRAL, BUILD }
 
@@ -51,7 +50,7 @@ var selected_object: Dictionary = {}
 var build_quarter_turns := 0
 var build_preview_tile := Vector2i.ZERO
 var build_preview_valid := false
-var build_ghost_root: Node3D
+var build_ghost_root: Variant
 var blocked_building_tiles := {}
 var building_tile_index := {}
 var selection_outline_root: Node3D
@@ -65,7 +64,7 @@ var map_overlay_controller: MapOverlayController
 var minimap: Control
 var map_overlay: Control
 var chunk_size := 32
-var player_zone_controller: RefCounted
+var player_zone_controller: Node
 var initialized := false
 
 
@@ -110,15 +109,15 @@ func _ready() -> void:
 	_sync_world_around_camera(true)
 	hotbar.selected.connect(_on_hotbar_selected)
 	hotbar.assignment_requested.connect(_on_hotbar_assignment_requested)
-	build_ghost_root = Node3D.new()
-	build_ghost_root.name = "BuildGhost"
+	build_ghost_root = BuildGhostScene.instantiate()
 	add_child(build_ghost_root)
 	selection_outline_root = Node3D.new()
 	selection_outline_root.name = "SelectionOutline"
 	selection_outline_root.visible = false
 	add_child(selection_outline_root)
-	player_zone_controller = PlayerZoneOverlayControllerScript.new()
-	player_zone_controller.setup(self, player, Callable(self, "_player_zone_should_be_visible"))
+	player_zone_controller = PlayerZoneOverlayScene.instantiate()
+	add_child(player_zone_controller)
+	player_zone_controller.setup(player, Callable(self, "_player_zone_should_be_visible"))
 	machine_window = MachineWindowScene.instantiate() as MachineWindow
 	$Hud.add_child(machine_window)
 	machine_window.recipe_selected.connect(_on_machine_recipe_selected)
@@ -176,8 +175,6 @@ func _process(delta: float) -> void:
 		inventory_controller.update()
 	_update_camera()
 	_sync_world_around_camera(false)
-	if player_zone_controller != null:
-		player_zone_controller.update()
 	_update_build_preview()
 	if map_overlay_controller != null:
 		map_overlay_controller.process(delta)
@@ -334,13 +331,14 @@ func _sync_world_around_camera(force: bool) -> void:
 
 
 func _create_map_overlays() -> void:
-	map_overlay_controller = MapOverlayControllerScript.new()
-	map_overlay_controller.name = "MapOverlayController"
-	add_child(map_overlay_controller)
+	map_overlay_controller = MapOverlayControllerScene.instantiate() as MapOverlayController
+	$Hud.add_child(map_overlay_controller)
 	map_overlay_controller.setup($Hud, environment, sim, player, hotbar)
 	map_overlay_controller.view_changed.connect(_on_map_overlay_view_changed)
 	minimap = map_overlay_controller.minimap
 	map_overlay = map_overlay_controller.map_overlay
+	if fps_counter != null:
+		fps_counter.keep_above_control(map_overlay)
 
 
 func _keep_hotbar_above_map_overlay() -> void:
@@ -542,13 +540,13 @@ func _update_status_label() -> void:
 
 func _update_build_preview() -> void:
 	if build_mode != BuildMode.BUILD or selected_building_id.is_empty():
-		build_ghost_root.visible = false
+		build_ghost_root.hide_preview()
 		build_preview_valid = false
 		return
 
 	var tile_variant: Variant = _mouse_ground_tile()
 	if tile_variant == null:
-		build_ghost_root.visible = false
+		build_ghost_root.hide_preview()
 		build_preview_valid = false
 		return
 
@@ -561,7 +559,7 @@ func _update_build_preview() -> void:
 		build_quarter_turns
 	)
 	if footprint.is_empty():
-		build_ghost_root.visible = false
+		build_ghost_root.hide_preview()
 		build_preview_valid = false
 		return
 
@@ -571,8 +569,7 @@ func _update_build_preview() -> void:
 		build_preview_tile.y,
 		build_quarter_turns
 	) and _footprint_allows_player(selected_building_id, footprint)
-	_sync_ghost_tiles(footprint, GHOST_VALID_COLOR if build_preview_valid else GHOST_BLOCKED_COLOR)
-	build_ghost_root.visible = true
+	build_ghost_root.show_footprint(footprint, build_preview_valid)
 
 
 func _try_place_selected_building() -> void:
@@ -592,7 +589,7 @@ func _try_place_selected_building() -> void:
 		build_quarter_turns
 	) or not _footprint_allows_player(selected_building_id, footprint):
 		build_preview_valid = false
-		_sync_ghost_tiles(footprint, GHOST_BLOCKED_COLOR)
+		build_ghost_root.show_footprint(footprint, false)
 		return
 
 	if sim.place_building(
@@ -659,19 +656,6 @@ func _mouse_ground_tile() -> Variant:
 	return Vector2i(int(round(hit.x)), int(round(hit.z)))
 
 
-func _sync_ghost_tiles(footprint: Array, color: Color) -> void:
-	_clear_children(build_ghost_root)
-	for raw_tile: Variant in footprint:
-		var tile: Dictionary = raw_tile
-		var instance := MeshInstance3D.new()
-		var mesh := PlaneMesh.new()
-		mesh.size = Vector2(0.96, 0.96)
-		instance.mesh = mesh
-		instance.position = Vector3(float(tile["x"]), BUILD_GHOST_Y, float(tile["y"]))
-		instance.material_override = _transparent_material(color)
-		build_ghost_root.add_child(instance)
-
-
 func _render_buildings_from_sim() -> void:
 	BuildingRendererScript.render_from_sim(sim, buildings_root, building_tile_index, blocked_building_tiles)
 	if map_overlay_controller != null:
@@ -710,7 +694,7 @@ func _enter_neutral_mode() -> void:
 	build_mode = BuildMode.NEUTRAL
 	build_preview_valid = false
 	if build_ghost_root != null:
-		build_ghost_root.visible = false
+		build_ghost_root.hide_preview()
 	_update_status_label()
 
 
@@ -785,18 +769,3 @@ func _player_overlaps_tile(position: Vector3, tile: Vector2i) -> bool:
 	var closest_z: float = clamp(position.z, float(tile.y) - 0.5, float(tile.y) + 0.5)
 	var offset := Vector2(position.x - closest_x, position.z - closest_z)
 	return offset.length_squared() < PLAYER_COLLISION_RADIUS * PLAYER_COLLISION_RADIUS
-
-
-func _transparent_material(color: Color) -> StandardMaterial3D:
-	var material := StandardMaterial3D.new()
-	material.albedo_color = color
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	return material
-
-
-func _clear_children(node: Node) -> void:
-	for child: Node in node.get_children():
-		node.remove_child(child)
-		child.queue_free()

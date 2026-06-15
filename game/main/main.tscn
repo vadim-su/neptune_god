@@ -1,9 +1,10 @@
-[gd_scene load_steps=6 format=3 uid="uid://rsh7othplwn4"]
+[gd_scene load_steps=7 format=3 uid="uid://rsh7othplwn4"]
 
 [ext_resource type="Script" uid="uid://c8clmmuy2i6wj" path="res://game/main/main.gd" id="1_main"]
 [ext_resource type="Script" uid="uid://2s5aawf7ye74" path="res://game/world/environment.gd" id="2_environment"]
 [ext_resource type="PackedScene" uid="uid://b1g8xqngq83gq" path="res://game/ui/hotbar.tscn" id="3_hotbar"]
 [ext_resource type="PackedScene" path="res://game/player/player.tscn" id="4_player"]
+[ext_resource type="PackedScene" path="res://game/ui/fps_counter.tscn" id="5_fps_counter"]
 
 [sub_resource type="Environment" id="Environment_scene"]
 background_mode = 1
@@ -59,3 +60,6 @@ offset_bottom = 104.0
 unique_name_in_owner = true
 layout_mode = 2
 text = "Starting Neptune simulation..."
+
+[node name="FpsCounter" parent="Hud" unique_id=177698649 instance=ExtResource("5_fps_counter")]
+unique_name_in_owner = true

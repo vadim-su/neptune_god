@@ -25,6 +25,10 @@ var fullscreen_snapshot_chunk_rect := Rect2i()
 var fullscreen_snapshot_chunk_grid_size := Vector2i.ZERO
 
 
+func _ready() -> void:
+	_ensure_overlays()
+
+
 func setup(
 	hud: Node,
 	environment_node: Node,
@@ -36,7 +40,7 @@ func setup(
 	sim = simulation
 	player = player_node
 	hotbar = hotbar_control
-	_create_overlays(hud)
+	_ensure_overlays(hud)
 
 
 func process(delta: float) -> void:
@@ -323,18 +327,27 @@ func _buildings_key(buildings: Array) -> String:
 	return str(hash_value)
 
 
-func _create_overlays(hud: Node) -> void:
-	minimap = MapOverlayScript.new()
-	minimap.name = "Minimap"
+func _ensure_overlays(_hud: Node = null) -> void:
+	if minimap == null:
+		minimap = get_node_or_null("Minimap") as Control
+	if minimap == null:
+		minimap = MapOverlayScript.new()
+		minimap.name = "Minimap"
+		add_child(minimap)
 	minimap.configure_minimap()
-	hud.add_child(minimap)
 
-	map_overlay = MapOverlayScript.new()
-	map_overlay.name = "MapOverlay"
+	if map_overlay == null:
+		map_overlay = get_node_or_null("MapOverlay") as Control
+	if map_overlay == null:
+		map_overlay = MapOverlayScript.new()
+		map_overlay.name = "MapOverlay"
+		add_child(map_overlay)
 	map_overlay.configure_fullscreen()
-	map_overlay.view_changed.connect(func() -> void:
-		mark_view_dirty()
-		view_changed.emit()
-	)
-	hud.add_child(map_overlay)
+	if not map_overlay.view_changed.is_connected(_on_map_overlay_view_changed):
+		map_overlay.view_changed.connect(_on_map_overlay_view_changed)
 	keep_hotbar_above_map_overlay()
+
+
+func _on_map_overlay_view_changed() -> void:
+	mark_view_dirty()
+	view_changed.emit()
