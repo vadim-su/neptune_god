@@ -90,6 +90,10 @@ impl SimWorld {
                     digest.combine_u64(4);
                     digest.combine_u64(0);
                 }
+                crate::transport::node::TransportNodeKind::ConveyorLift => {
+                    digest.combine_u64(5);
+                    digest.combine_u64(0);
+                }
             }
             combine_tile_digest(&mut digest, node.sort_tile);
             match node.direction {

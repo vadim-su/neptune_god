@@ -43,9 +43,9 @@ These are the intended rules for the next implementation phases.
 - [x] Give placed buildings and building ports an explicit surface `z`.
 - [x] Keep ordinary belt topology and inserter inventory interactions on one surface level.
 - [x] Render terrain, resource instances, building fallback meshes, and build ghosts at `surface_z`.
-- [ ] Expose z-aware terrain picking for placement and cursor hover.
-- [ ] Add a first cross-level connector as a conveyor lift.
-- [ ] Add save/schema migration coverage for old snapshots at API boundaries.
-- [ ] Add cliff/edge/ramp visuals after connector rules are stable.
-- [ ] Add map/minimap height shading and current z-level filtering.
-- [ ] Add authoring tools or worldgen rules that actually produce non-zero `surface_z`.
+- [x] Expose z-aware terrain picking for placement and cursor hover.
+- [x] Add a first cross-level connector as a conveyor lift.
+- [x] Add save/schema migration coverage for old snapshots at API boundaries.
+- [x] Add cliff/edge visuals for height margins; ramp visuals stay tied to future connector rules.
+- [x] Add map/minimap height shading and current z-level filtering.
+- [x] Add authoring tools or worldgen rules that actually produce non-zero `surface_z`.

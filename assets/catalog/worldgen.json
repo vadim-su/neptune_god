@@ -32,6 +32,24 @@
           "min_distance_from_spawn": 56
         }
       ],
+      "surface": {
+        "base_z": 0,
+        "starting_area_z": 0,
+        "layers": [
+          {
+            "z": 1,
+            "threshold": 0.68,
+            "scale": 128.0,
+            "min_distance_from_spawn": 72
+          },
+          {
+            "z": 2,
+            "threshold": 0.82,
+            "scale": 96.0,
+            "min_distance_from_spawn": 128
+          }
+        ]
+      },
       "resources": [
         {
           "resource": "iron_ore_patch",

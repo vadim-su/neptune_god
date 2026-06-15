@@ -219,6 +219,25 @@
         "behavior": {"driver": "underground", "speed_units_per_tick": 4, "max_range_tiles": 4},
         "power": {"type": "none"}
       }
+    },
+    {
+      "id": "basic_conveyor_lift",
+      "display_name": "Conveyor Lift",
+      "ui_type": "Transport",
+      "state_label": "transport",
+      "model": "",
+      "color": "#384C5C",
+      "walkable": true,
+      "sim": {
+        "kind": "Passive",
+        "footprint": {"rectangle": [1, 1]},
+        "rotate_footprint": true,
+        "outputs": [
+          {"role": "BeltLane", "side": "OutputDirection", "offsets": [0]}
+        ],
+        "behavior": {"driver": "conveyor_lift", "speed_units_per_tick": 4},
+        "power": {"type": "none"}
+      }
     }
   ]
 }

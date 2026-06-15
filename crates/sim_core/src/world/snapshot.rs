@@ -655,6 +655,7 @@ fn validate_building_state_against_behavior(
 ) -> Result<(), String> {
     match (&building.state, &behavior.driver) {
         (SimBuildingState::Passive, CoreBuildingDriver::Noop)
+        | (SimBuildingState::Passive, CoreBuildingDriver::ConveyorLift { .. })
         | (SimBuildingState::Transport, CoreBuildingDriver::Transport { .. })
         | (SimBuildingState::Splitter(_), CoreBuildingDriver::Splitter { .. })
         | (SimBuildingState::Underground(_), CoreBuildingDriver::Underground { .. })

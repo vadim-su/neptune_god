@@ -24,6 +24,7 @@ const PLAYER_MARKER_RADIUS := 6.0
 const MAP_TEXTURE_BACKGROUND := Color(0.0, 0.0, 0.0, 0.0)
 const MAP_BACKGROUND_COLOR := Color(0.028, 0.038, 0.034, 1.0)
 const FOGGED_TILE_BLEND := 0.58
+const SURFACE_Z_SHADE_STEP := 0.10
 
 const TERRAIN_COLORS := {
 	"ground": Color(0.16, 0.23, 0.17, 1.0),
@@ -67,6 +68,7 @@ class MapChunkTextureTask:
 	var background := Color.TRANSPARENT
 	var mirror_x := false
 	var mirror_y := false
+	var current_surface_z := 0
 	var snapshot_key := ""
 	var epoch := 0
 	var width := 1
@@ -84,6 +86,7 @@ class MapChunkTextureTask:
 		next_background: Color,
 		next_mirror_x: bool,
 		next_mirror_y: bool,
+		next_current_surface_z: int,
 		next_snapshot_key: String,
 		next_epoch: int
 	) -> void:
@@ -97,6 +100,7 @@ class MapChunkTextureTask:
 		background = next_background
 		mirror_x = next_mirror_x
 		mirror_y = next_mirror_y
+		current_surface_z = next_current_surface_z
 		snapshot_key = next_snapshot_key
 		epoch = next_epoch
 		width = maxi(bounds.size.x, 1)
@@ -114,6 +118,8 @@ class MapChunkTextureTask:
 			var tile: Dictionary = raw_tile
 			if not bool(tile.get("render", true)):
 				continue
+			if int(tile.get("surface_z", 0)) != current_surface_z:
+				continue
 			var pos := Vector2i(int(tile.get("x", 0)), int(tile.get("y", 0)))
 			if not bounds.has_point(pos):
 				continue
@@ -121,6 +127,7 @@ class MapChunkTextureTask:
 			var resource_id := str(tile.get("resource", ""))
 			if not resource_id.is_empty() and int(tile.get("amount", 0)) > 0:
 				color = Color(resource_colors.get(resource_id, color)).lerp(Color.WHITE, 0.08)
+			color = _height_shaded_color(color, int(tile.get("surface_z", 0)))
 			_write_rgba8(
 				data,
 				width,
@@ -131,6 +138,8 @@ class MapChunkTextureTask:
 
 		for raw_building: Variant in buildings:
 			var building: Dictionary = raw_building
+			if int(building.get("surface_z", building.get("z", 0))) != current_surface_z:
+				continue
 			var def_id := str(building.get("def_id", ""))
 			var building_color: Color = building_colors.get(def_id, _color_from_id(def_id))
 			for raw_tile: Variant in building.get("footprint", []):
@@ -173,6 +182,13 @@ class MapChunkTextureTask:
 		target_data[offset + 2] = clampi(int(round(color.b * 255.0)), 0, 255)
 		target_data[offset + 3] = clampi(int(round(color.a * 255.0)), 0, 255)
 
+	static func _height_shaded_color(color: Color, surface_z: int) -> Color:
+		if surface_z == 0:
+			return color
+		if surface_z > 0:
+			return color.lerp(Color.WHITE, clampf(float(surface_z) * SURFACE_Z_SHADE_STEP, 0.0, 0.35))
+		return color.darkened(clampf(float(-surface_z) * SURFACE_Z_SHADE_STEP, 0.0, 0.35))
+
 	static func _color_from_id(id: String) -> Color:
 		var hash_value := id.hash()
 		var r := 0.30 + float(hash_value & 0x3f) / 160.0
@@ -188,6 +204,7 @@ var _buildings: Array = []
 var _visible_rect := Rect2i(Vector2i.ZERO, Vector2i.ONE)
 var _current_visible_rect := Rect2i(Vector2i.ZERO, Vector2i.ONE)
 var _player_position := Vector3.ZERO
+var _current_surface_z := 0
 var _pixels_per_tile := 4.0
 var _map_center := Vector2.ZERO
 var _center_initialized := false
@@ -307,6 +324,28 @@ static func _visible_resource_lookup(tiles: Array, visible_rect: Rect2i) -> Dict
 	return lookup
 
 
+static func _visible_resource_lookup_for_surface_z(tiles: Array, visible_rect: Rect2i, surface_z: int) -> Dictionary:
+	var lookup := {}
+	for raw_tile: Variant in tiles:
+		var tile: Dictionary = raw_tile
+		if int(tile.get("surface_z", 0)) != surface_z:
+			continue
+		if not bool(tile.get("render", true)):
+			continue
+		var pos := Vector2i(int(tile.get("x", 0)), int(tile.get("y", 0)))
+		if not visible_rect.has_point(pos):
+			continue
+		var resource_id := str(tile.get("resource", ""))
+		var amount := int(tile.get("amount", 0))
+		if resource_id.is_empty() or amount <= 0:
+			continue
+		lookup[pos] = {
+			"resource": resource_id,
+			"amount": amount,
+		}
+	return lookup
+
+
 static func _resource_vein_neighbors(tile: Vector2i) -> Array[Vector2i]:
 	var neighbors: Array[Vector2i] = []
 	for offset_y in range(-RESOURCE_VEIN_NEIGHBOR_DISTANCE, RESOURCE_VEIN_NEIGHBOR_DISTANCE + 1):
@@ -375,6 +414,9 @@ func set_chunk_snapshot(
 	buildings_key := "",
 	chunk_snapshot_key := ""
 ) -> void:
+	var next_current_surface_z := _surface_z_from_player_position(player_position)
+	var surface_z_changed := next_current_surface_z != _current_surface_z
+	_current_surface_z = next_current_surface_z
 	var effective_current_visible_rect := current_visible_rect
 	if effective_current_visible_rect.size.x <= 0 or effective_current_visible_rect.size.y <= 0:
 		effective_current_visible_rect = visible_rect
@@ -386,6 +428,7 @@ func set_chunk_snapshot(
 		next_chunk_sync_key = _chunk_sync_key_for(chunks, next_buildings_key)
 	else:
 		next_chunk_sync_key = str(hash([chunk_snapshot_key, next_buildings_key]))
+	next_chunk_sync_key = str(hash([next_chunk_sync_key, _current_surface_z]))
 	var chunks_changed := next_chunk_sync_key != _chunk_sync_key
 	var previous_visible_rect := _visible_rect
 	var previous_current_visible_rect := _current_visible_rect
@@ -397,7 +440,7 @@ func set_chunk_snapshot(
 		_visible_rect = visible_rect
 	_current_visible_rect = effective_current_visible_rect
 	_chunk_sync_key = next_chunk_sync_key
-	if chunks_changed:
+	if chunks_changed or surface_z_changed:
 		var priority_rect := effective_current_visible_rect
 		if is_fullscreen_open():
 			priority_rect = _current_bounds()
@@ -411,11 +454,14 @@ func set_chunk_snapshot(
 
 
 func set_player_position(position: Vector3) -> void:
-	if _center_initialized and _player_position == position:
+	var next_current_surface_z := _surface_z_from_player_position(position)
+	var surface_z_changed := next_current_surface_z != _current_surface_z
+	if _center_initialized and _player_position == position and not surface_z_changed:
 		return
 	var previous_tile := _player_marker_tile()
 	var previous_bounds := _current_bounds()
 	_player_position = position
+	_current_surface_z = next_current_surface_z
 	if _is_minimap:
 		_map_center = Vector2(_player_position.x, _player_position.z)
 		_center_initialized = true
@@ -431,8 +477,28 @@ func set_player_position(position: Vector3) -> void:
 		_map_center = Vector2(_player_position.x, _player_position.z)
 		if _current_bounds() != previous_bounds:
 			view_changed.emit()
-	if visible and _player_marker_tile() != previous_tile:
+	if surface_z_changed:
+		_invalidate_surface_z_dependent_map_textures()
+	if visible and (_player_marker_tile() != previous_tile or surface_z_changed):
 		_request_redraw()
+
+
+func _surface_z_from_player_position(position: Vector3) -> int:
+	return int(round(position.y))
+
+
+func _invalidate_surface_z_dependent_map_textures() -> void:
+	_map_texture_epoch += 1
+	_pending_map_texture_jobs.clear()
+	_pending_map_chunk_syncs.clear()
+	_pending_map_chunk_sync_read_index = 0
+	_pending_map_chunk_sync_lookup.clear()
+	for chunk_key: String in _map_chunk_entries.keys():
+		var entry: Dictionary = _map_chunk_entries[chunk_key]
+		entry.erase("texture")
+		_map_chunk_entries[chunk_key] = entry
+	_map_chunk_entries_revision += 1
+	_invalidate_fullscreen_chart_cache()
 
 
 func center_on_player() -> void:
@@ -563,6 +629,10 @@ func background_regions_for_tests(bounds: Rect2i) -> Array[Rect2i]:
 
 func resource_color_for_tests(resource_id: String, terrain_color: Color) -> Color:
 	return _resource_color(resource_id, terrain_color)
+
+
+func height_shaded_color_for_tests(color: Color, surface_z: int) -> Color:
+	return MapChunkTextureTask._height_shaded_color(color, surface_z)
 
 
 func pending_map_texture_job_count_for_tests() -> int:
@@ -1097,6 +1167,7 @@ func _queue_map_texture_job(chunk_key: String, bounds: Rect2i, tiles: Array, bui
 		MAP_TEXTURE_BACKGROUND,
 		_mirror_chart_x(),
 		_mirror_chart_y(),
+		_current_surface_z,
 		snapshot_key,
 		_map_texture_epoch
 	)
@@ -1458,7 +1529,7 @@ func _chunk_sync_key_for(chunks: Array, buildings_key: String) -> String:
 
 
 func _map_chunk_snapshot_key(chunk_signature: String, buildings_key: String, bounds: Rect2i) -> String:
-	return str(hash([bounds, chunk_signature, buildings_key]))
+	return str(hash([bounds, chunk_signature, buildings_key, _current_surface_z]))
 
 
 func _chunk_signature(chunk: Dictionary) -> String:
@@ -1478,6 +1549,7 @@ func _tiles_signature(tiles: Array) -> String:
 			str(tile.get("terrain", "")),
 			str(tile.get("resource", "")),
 			int(tile.get("amount", 0)),
+			int(tile.get("surface_z", 0)),
 			bool(tile.get("render", true)),
 		])
 	return str(hash_value)
@@ -1500,6 +1572,7 @@ func _buildings_key_value(buildings: Array) -> String:
 			hash_value,
 			int(building.get("id", 0)),
 			str(building.get("def_id", "")),
+			int(building.get("surface_z", building.get("z", 0))),
 			hash(building.get("footprint", [])),
 		])
 	return str(hash_value)
@@ -1581,7 +1654,7 @@ func _visible_resource_lookup_for_query_rect(query_rect: Rect2i) -> Dictionary:
 	var query_tiles := _tiles
 	if query_tiles.is_empty():
 		query_tiles = _tiles_for_query_rect(query_rect)
-	_visible_resource_lookup_cache = _visible_resource_lookup(query_tiles, query_rect)
+	_visible_resource_lookup_cache = _visible_resource_lookup_for_surface_z(query_tiles, query_rect, _current_surface_z)
 	_visible_resource_lookup_cache_rect = query_rect
 	_visible_resource_lookup_cache_revision = _map_chunk_entries_revision
 	_visible_resource_lookup_cache_rebuild_count += 1
@@ -1593,6 +1666,7 @@ func _hovered_resource_vein_key(hovered: Vector2i) -> String:
 		hovered,
 		_current_visible_rect,
 		_map_chunk_entries_revision,
+		_current_surface_z,
 	]))
 
 

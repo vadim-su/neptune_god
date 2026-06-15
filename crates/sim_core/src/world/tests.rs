@@ -1648,6 +1648,130 @@ fn ordinary_belts_on_different_surface_z_do_not_connect() {
 }
 
 #[test]
+fn conveyor_lift_builds_cross_level_transport_node() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    world.set_surface_z(TilePos::new(1, 0), 1);
+
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBelt {
+            pos: TilePos::new(-1, 0),
+            direction: Direction::East,
+            input_direction: Direction::East,
+            speed: UnitsPerTick::new(8),
+        })
+        .unwrap();
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBuilding {
+            def_id: "basic_conveyor_lift".to_string(),
+            origin: TilePos::new(0, 0),
+            direction: Direction::East,
+            inserter_drop_direction: None,
+        })
+        .unwrap();
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBelt {
+            pos: TilePos::new(1, 0),
+            direction: Direction::East,
+            input_direction: Direction::East,
+            speed: UnitsPerTick::new(8),
+        })
+        .unwrap();
+
+    let (input_line, _, _, _) = world.line_window_for_tile(TilePos::new(-1, 0)).unwrap();
+    let (output_line, _, _, _) = world.line_window_for_tile(TilePos::new(1, 0)).unwrap();
+    assert_ne!(input_line, output_line);
+
+    let node = world
+        .transport
+        .nodes_sorted()
+        .find(|node| node.kind == TransportNodeKind::ConveyorLift)
+        .unwrap();
+    assert_eq!(node.input_ports().count(), 2);
+    assert_eq!(node.output_ports().count(), 2);
+    assert!(node.input_ports().all(|port| port.line == input_line));
+    assert!(node.output_ports().all(|port| port.line == output_line));
+    assert!(world.transport.nodes_sorted().all(|node| {
+        !matches!(
+            node.kind,
+            TransportNodeKind::EndTransfer | TransportNodeKind::SideLoad { .. }
+        )
+    }));
+}
+
+#[test]
+fn conveyor_lift_moves_item_between_surface_levels() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    world.set_surface_z(TilePos::new(1, 0), 1);
+
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBelt {
+            pos: TilePos::new(-1, 0),
+            direction: Direction::East,
+            input_direction: Direction::East,
+            speed: UnitsPerTick::new(8),
+        })
+        .unwrap();
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBuilding {
+            def_id: "basic_conveyor_lift".to_string(),
+            origin: TilePos::new(0, 0),
+            direction: Direction::East,
+            inserter_drop_direction: None,
+        })
+        .unwrap();
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBelt {
+            pos: TilePos::new(1, 0),
+            direction: Direction::East,
+            input_direction: Direction::East,
+            speed: UnitsPerTick::new(8),
+        })
+        .unwrap();
+
+    let (input_line, _, _, _) = world.line_window_for_tile(TilePos::new(-1, 0)).unwrap();
+    let (output_line, _, _, _) = world.line_window_for_tile(TilePos::new(1, 0)).unwrap();
+    assert!(
+        world
+            .transport
+            .line_mut(input_line)
+            .unwrap()
+            .insert_item_at_entry_boundary(0, TEST_IRON_ORE)
+    );
+
+    for _ in 0..200 {
+        tick_world_for_tests(&mut world);
+    }
+
+    let output_items = [0, 1]
+        .into_iter()
+        .flat_map(|lane| line_lane_items(&world, output_line, lane))
+        .collect::<Vec<_>>();
+    assert_eq!(output_items, vec![TEST_IRON_ORE]);
+}
+
+#[test]
+fn conveyor_lift_rejects_same_level_output_surface() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+
+    let result = world.apply_core_command_for_tests(SimCommand::PlaceBuilding {
+        def_id: "basic_conveyor_lift".to_string(),
+        origin: TilePos::new(0, 0),
+        direction: Direction::East,
+        inserter_drop_direction: None,
+    });
+
+    assert_eq!(
+        result,
+        Err(SimCommandError::UnevenTerrain {
+            origin: TilePos::new(0, 0),
+            pos: TilePos::new(1, 0),
+            expected_z: 0,
+            found_z: 0,
+        })
+    );
+}
+
+#[test]
 fn inserter_does_not_pick_up_storage_across_surface_levels() {
     let mut world = SimWorld::with_catalog(catalog_for_tests());
     world.set_surface_z(TilePos::new(2, 0), 1);

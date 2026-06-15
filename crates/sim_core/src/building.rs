@@ -126,6 +126,7 @@ pub fn initial_state(
     match &behavior.driver {
         CoreBuildingDriver::Noop => Ok(SimBuildingState::Passive),
         CoreBuildingDriver::Transport { .. } => Ok(SimBuildingState::Transport),
+        CoreBuildingDriver::ConveyorLift { .. } => Ok(SimBuildingState::Passive),
         CoreBuildingDriver::Splitter { .. } => {
             Ok(SimBuildingState::Splitter(SplitterRuntime::default()))
         }

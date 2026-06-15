@@ -116,12 +116,16 @@ impl SimWorld {
         if building.direction != direction || direction.output_pos(source_pos) != target_pos {
             return false;
         }
+        let Some(def) = self.catalog.building_by_id(&building.def_id) else {
+            return false;
+        };
+        if matches!(def.behavior.driver, CoreBuildingDriver::ConveyorLift { .. }) {
+            return self.surface_z_at(target_pos) == target_z && building.surface_z != target_z;
+        }
         if building.surface_z != target_z {
             return false;
         }
-        self.catalog
-            .building_by_id(&building.def_id)
-            .is_some_and(|def| matches!(def.behavior.driver, CoreBuildingDriver::Splitter { .. }))
+        matches!(def.behavior.driver, CoreBuildingDriver::Splitter { .. })
     }
 
     pub(super) fn rebuild_transport_lines(&mut self) {
@@ -222,18 +226,40 @@ impl SimWorld {
         );
         let splitter_owned_input_lines = self.splitter_owned_input_lines(&built_records);
         let underground_owned_input_lines = self.underground_owned_input_lines(&built_records);
+        let conveyor_lift_owned_input_lines = self.conveyor_lift_owned_input_lines(&built_records);
         let node_owned_input_lines = splitter_owned_input_lines
             .union(&underground_owned_input_lines)
             .copied()
-            .collect();
+            .chain(conveyor_lift_owned_input_lines.iter().copied())
+            .collect::<BTreeSet<_>>();
         self.insert_belt_interactions(&mut transport, &built_records, &node_owned_input_lines);
         self.insert_underground_nodes(&mut transport, &built_records, &underground_runtimes);
+        self.insert_conveyor_lift_nodes(&mut transport, &built_records, &underground_runtimes);
         self.insert_splitter_nodes(&mut transport, &built_records, &splitter_runtimes);
 
         self.topology_revision_seen = topology.source_revision;
         self.activation
             .replace_active_lines(transport.line_ids_sorted());
         self.transport = transport;
+    }
+
+    fn conveyor_lift_owned_input_lines(&self, records: &[BuiltLineRecord]) -> BTreeSet<LineId> {
+        self.buildings
+            .values()
+            .filter(|building| self.is_conveyor_lift_building(building))
+            .filter_map(|building| {
+                let output_tile = building.direction.output_pos(building.origin);
+                if self.surface_z_at(output_tile) == building.surface_z {
+                    return None;
+                }
+                self.conveyor_lift_output_line(records, building, output_tile)?;
+                line_ending_from_tile_to_tile(
+                    records,
+                    building.direction.opposite().output_pos(building.origin),
+                    building.origin,
+                )
+            })
+            .collect()
     }
 
     fn split_built_line_by_speed(
@@ -327,7 +353,10 @@ impl SimWorld {
         self.transport
             .nodes_sorted()
             .filter_map(|node| {
-                if node.kind != TransportNodeKind::Underground {
+                if !matches!(
+                    node.kind,
+                    TransportNodeKind::Underground | TransportNodeKind::ConveyorLift
+                ) {
                     return None;
                 }
                 let direction = node.direction?;
@@ -337,10 +366,18 @@ impl SimWorld {
                     TransportNodeRuntime::Underground(runtime) => runtime.clone(),
                     _ => return None,
                 };
-                let speed = self
-                    .topology_graph
-                    .underground_link(entrance)
-                    .map(|link| link.speed)?;
+                let speed = match node.kind {
+                    TransportNodeKind::Underground => self
+                        .topology_graph
+                        .underground_link(entrance)
+                        .map(|link| link.speed)?,
+                    TransportNodeKind::ConveyorLift => self
+                        .building_by_origin
+                        .get(&entrance)
+                        .and_then(|building_id| self.buildings.get(building_id))
+                        .and_then(|building| self.conveyor_lift_speed(building))?,
+                    _ => return None,
+                };
                 Some(((entrance, exit, direction, speed), runtime))
             })
             .collect()
@@ -429,6 +466,69 @@ impl SimWorld {
             );
             if let Some(old_runtime) =
                 old_underground_runtimes.get(&(entrance, exit, direction, speed))
+            {
+                node.runtime = TransportNodeRuntime::Underground(old_runtime.clone());
+            }
+            transport.insert_node(node);
+        }
+    }
+
+    fn insert_conveyor_lift_nodes(
+        &self,
+        transport: &mut TransportStorage,
+        records: &[BuiltLineRecord],
+        old_underground_runtimes: &BTreeMap<
+            (TilePos, TilePos, Direction, UnitsPerTick),
+            crate::transport::node::UndergroundTransportRuntime,
+        >,
+    ) {
+        use crate::transport::node::{TransportNode, TransportNodeId, TransportNodeRuntime};
+
+        let mut next_node_id = transport
+            .nodes_sorted()
+            .map(|node| node.id.0)
+            .max()
+            .unwrap_or(0);
+        let mut lifts = self
+            .buildings
+            .values()
+            .filter(|building| self.is_conveyor_lift_building(building))
+            .collect::<Vec<_>>();
+        lifts.sort_by_key(|building| (building.origin, building.id));
+
+        for building in lifts {
+            let direction = building.direction;
+            let input_tile = direction.opposite().output_pos(building.origin);
+            let output_tile = direction.output_pos(building.origin);
+            if self.surface_z_at(output_tile) == building.surface_z {
+                continue;
+            }
+            let Some(input_line) =
+                line_ending_from_tile_to_tile(records, input_tile, building.origin)
+            else {
+                continue;
+            };
+            let Some(output_line) = self.conveyor_lift_output_line(records, building, output_tile)
+            else {
+                continue;
+            };
+            let Some(speed) = self.conveyor_lift_speed(building) else {
+                continue;
+            };
+            let distance = DistanceUnits::new(DistanceUnits::UNITS_PER_TILE);
+
+            next_node_id += 1;
+            let mut node = TransportNode::conveyor_lift(
+                TransportNodeId(next_node_id),
+                building.origin,
+                output_tile,
+                direction,
+                input_line,
+                output_line,
+                distance,
+            );
+            if let Some(old_runtime) =
+                old_underground_runtimes.get(&(building.origin, output_tile, direction, speed))
             {
                 node.runtime = TransportNodeRuntime::Underground(old_runtime.clone());
             }
@@ -602,6 +702,47 @@ impl SimWorld {
             return None;
         }
         line_by_first_tile(records, output_pos).map(|record| record.line_id)
+    }
+
+    fn conveyor_lift_output_line(
+        &self,
+        records: &[BuiltLineRecord],
+        building: &SimBuilding,
+        output_pos: TilePos,
+    ) -> Option<LineId> {
+        let output_belt = self.topology_graph.belt(output_pos)?;
+        if output_belt.surface_z == building.surface_z {
+            return None;
+        }
+        let source_side = source_side_for_target(building.origin, output_pos)?;
+        let accepts_lift_output = source_side == output_belt.input_direction.opposite()
+            || output_belt
+                .direction
+                .near_lane_for_source_side(source_side)
+                .is_some();
+        if !accepts_lift_output {
+            return None;
+        }
+        line_by_first_tile(records, output_pos).map(|record| record.line_id)
+    }
+
+    fn is_conveyor_lift_building(&self, building: &SimBuilding) -> bool {
+        self.catalog
+            .building_by_id(&building.def_id)
+            .is_some_and(|def| {
+                matches!(def.behavior.driver, CoreBuildingDriver::ConveyorLift { .. })
+            })
+    }
+
+    fn conveyor_lift_speed(&self, building: &SimBuilding) -> Option<UnitsPerTick> {
+        self.catalog
+            .building_by_id(&building.def_id)
+            .and_then(|def| match def.behavior.driver {
+                CoreBuildingDriver::ConveyorLift {
+                    speed_units_per_tick,
+                } => Some(speed_units_per_tick),
+                _ => None,
+            })
     }
 
     fn tile_speed(&self, pos: TilePos) -> UnitsPerTick {
@@ -780,6 +921,9 @@ impl SimWorld {
                 TransportNodeKind::Underground => {
                     self.process_underground_node(node, diff);
                 }
+                TransportNodeKind::ConveyorLift => {
+                    self.process_conveyor_lift_node(node, diff);
+                }
                 TransportNodeKind::BlockedFront => {}
             }
         }
@@ -816,6 +960,51 @@ impl SimWorld {
             .topology_graph
             .underground_link(node.sort_tile)
             .map(|link| link.speed)
+            .unwrap_or_else(|| UnitsPerTick::new(4));
+
+        if egress_underground_items(self, &output_ports, &mut runtime) {
+            mark_underground_node_lines_changed(self, &input_ports, &output_ports, diff);
+        }
+        if advance_underground_items(&mut runtime, speed.distance_per_tick()) {
+            mark_underground_node_lines_changed(self, &input_ports, &output_ports, diff);
+        }
+        if ingress_underground_items(self, &input_ports, &mut runtime) {
+            mark_underground_node_lines_changed(self, &input_ports, &output_ports, diff);
+        }
+
+        if let Some(stored) = self.transport.underground_runtime_mut(node.id) {
+            *stored = runtime;
+        }
+    }
+
+    pub(super) fn process_conveyor_lift_node(
+        &mut self,
+        node: crate::transport::node::TransportNode,
+        diff: &mut SimDiff,
+    ) {
+        let input_ports = node.input_ports().copied().collect::<Vec<_>>();
+        let output_ports = node.output_ports().copied().collect::<Vec<_>>();
+        if input_ports.len() != 2 || output_ports.len() != 2 {
+            return;
+        }
+        let crate::transport::node::TransportNodeRuntime::Underground(mut runtime) = node.runtime
+        else {
+            return;
+        };
+        let Some(direction) = node.direction else {
+            return;
+        };
+        let speed = self
+            .building_by_origin
+            .get(&node.sort_tile)
+            .and_then(|building_id| self.buildings.get(building_id))
+            .and_then(|building| {
+                if building.direction == direction {
+                    self.conveyor_lift_speed(building)
+                } else {
+                    None
+                }
+            })
             .unwrap_or_else(|| UnitsPerTick::new(4));
 
         if egress_underground_items(self, &output_ports, &mut runtime) {

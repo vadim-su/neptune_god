@@ -79,9 +79,12 @@ class WorldChunkRenderTask:
 
 	static func terrain_chunk_render_data(source_tiles: Array) -> Dictionary:
 		var terrain_by_pos := {}
+		var surface_z_by_pos := {}
 		for raw_tile: Variant in source_tiles:
 			var tile: Dictionary = raw_tile
-			terrain_by_pos[Vector2i(tile["x"], tile["y"])] = tile["terrain"]
+			var pos := Vector2i(tile["x"], tile["y"])
+			terrain_by_pos[pos] = tile["terrain"]
+			surface_z_by_pos[pos] = int(tile.get("surface_z", 0))
 
 		var tiles_by_batch := {}
 		for raw_tile: Variant in source_tiles:
@@ -106,12 +109,12 @@ class WorldChunkRenderTask:
 
 		var batches: Array[Dictionary] = []
 		for batch_key: Vector2i in batch_keys:
-			batches.append(terrain_chunk_render_batch_data(tiles_by_batch[batch_key], terrain_by_pos))
+			batches.append(terrain_chunk_render_batch_data(tiles_by_batch[batch_key], terrain_by_pos, surface_z_by_pos))
 		return {
 			"batches": batches,
 		}
 
-	static func terrain_chunk_render_batch_data(source_tiles: Array, terrain_by_pos: Dictionary) -> Dictionary:
+	static func terrain_chunk_render_batch_data(source_tiles: Array, terrain_by_pos: Dictionary, surface_z_by_pos: Dictionary) -> Dictionary:
 		var vertices := PackedVector3Array()
 		var normals := PackedVector3Array()
 		var uvs := PackedVector2Array()
@@ -130,6 +133,16 @@ class WorldChunkRenderTask:
 				indices,
 				tile,
 				terrain_by_pos
+			)
+			add_height_edge_geometry(
+				vertices,
+				normals,
+				uvs,
+				colors,
+				indices,
+				tile,
+				terrain_by_pos,
+				surface_z_by_pos
 			)
 
 		return {
@@ -176,6 +189,88 @@ class WorldChunkRenderTask:
 			indices.append(base_index + quad[0])
 			indices.append(base_index + quad[2])
 			indices.append(base_index + quad[3])
+
+	static func add_height_edge_geometry(
+		vertices: PackedVector3Array,
+		normals: PackedVector3Array,
+		uvs: PackedVector2Array,
+		colors: PackedColorArray,
+		indices: PackedInt32Array,
+		tile: Dictionary,
+		terrain_by_pos: Dictionary,
+		surface_z_by_pos: Dictionary
+	) -> void:
+		var pos := Vector2i(tile["x"], tile["y"])
+		var surface_z := int(tile.get("surface_z", 0))
+		var top_y := surface_y_for_tile(tile, TASK_TERRAIN_Y)
+		var terrain_weight := terrain_weight_vector(str(tile.get("terrain", "ground")))
+		var terrain_color := Color(terrain_weight.x, terrain_weight.y, terrain_weight.z, 1.0)
+		var edges := [
+			{"neighbor": Vector2i(-1, 0), "normal": Vector3.LEFT, "corners": [Vector2(-0.5, -0.5), Vector2(-0.5, 0.5)]},
+			{"neighbor": Vector2i(1, 0), "normal": Vector3.RIGHT, "corners": [Vector2(0.5, 0.5), Vector2(0.5, -0.5)]},
+			{"neighbor": Vector2i(0, -1), "normal": Vector3.FORWARD, "corners": [Vector2(0.5, -0.5), Vector2(-0.5, -0.5)]},
+			{"neighbor": Vector2i(0, 1), "normal": Vector3.BACK, "corners": [Vector2(-0.5, 0.5), Vector2(0.5, 0.5)]},
+		]
+		for edge: Dictionary in edges:
+			var neighbor_pos: Vector2i = pos + edge["neighbor"]
+			if not surface_z_by_pos.has(neighbor_pos):
+				continue
+			var neighbor_z := int(surface_z_by_pos[neighbor_pos])
+			if neighbor_z >= surface_z:
+				continue
+			var bottom_y := TASK_TERRAIN_Y + float(neighbor_z) * TASK_SURFACE_LEVEL_HEIGHT
+			add_height_edge_quad(
+				vertices,
+				normals,
+				uvs,
+				colors,
+				indices,
+				pos,
+				top_y,
+				bottom_y,
+				edge["normal"],
+				edge["corners"],
+				terrain_color
+			)
+
+	static func add_height_edge_quad(
+		vertices: PackedVector3Array,
+		normals: PackedVector3Array,
+		uvs: PackedVector2Array,
+		colors: PackedColorArray,
+		indices: PackedInt32Array,
+		pos: Vector2i,
+		top_y: float,
+		bottom_y: float,
+		normal: Vector3,
+		corners: Array,
+		color: Color
+	) -> void:
+		var base_index := vertices.size()
+		var first: Vector2 = corners[0]
+		var second: Vector2 = corners[1]
+		var world_first := Vector2(float(pos.x) + first.x, float(pos.y) + first.y)
+		var world_second := Vector2(float(pos.x) + second.x, float(pos.y) + second.y)
+		var edge_length := world_first.distance_to(world_second)
+		var height := top_y - bottom_y
+		var edge_u := (world_first.x + world_first.y) * 0.5
+		vertices.append(Vector3(world_first.x, top_y, world_first.y))
+		vertices.append(Vector3(world_second.x, top_y, world_second.y))
+		vertices.append(Vector3(world_second.x, bottom_y, world_second.y))
+		vertices.append(Vector3(world_first.x, bottom_y, world_first.y))
+		for index in range(4):
+			normals.append(normal)
+			colors.append(color)
+		uvs.append(Vector2(edge_u, 0.0))
+		uvs.append(Vector2(edge_u + edge_length, 0.0))
+		uvs.append(Vector2(edge_u + edge_length, height))
+		uvs.append(Vector2(edge_u, height))
+		indices.append(base_index)
+		indices.append(base_index + 1)
+		indices.append(base_index + 2)
+		indices.append(base_index)
+		indices.append(base_index + 2)
+		indices.append(base_index + 3)
 
 	static func terrain_blend_weight(pos: Vector2i, x_offset: float, z_offset: float, terrain_by_pos: Dictionary) -> Color:
 		var samples: Array[Vector2i] = [pos]
@@ -935,7 +1030,11 @@ func _terrain_chunk_render_data(tiles: Array) -> Dictionary:
 
 
 func _terrain_chunk_render_batch_data(tiles: Array, terrain_by_pos: Dictionary) -> Dictionary:
-	return WorldChunkRenderTask.terrain_chunk_render_batch_data(tiles, terrain_by_pos)
+	var surface_z_by_pos := {}
+	for raw_tile: Variant in tiles:
+		var tile: Dictionary = raw_tile
+		surface_z_by_pos[Vector2i(tile["x"], tile["y"])] = int(tile.get("surface_z", 0))
+	return WorldChunkRenderTask.terrain_chunk_render_batch_data(tiles, terrain_by_pos, surface_z_by_pos)
 
 
 func _add_terrain_chunk_from_data(chunk: Vector2i, render_data: Dictionary) -> Node3D:

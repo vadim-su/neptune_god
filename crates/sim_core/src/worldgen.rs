@@ -68,6 +68,21 @@ pub struct TerrainLayerDef {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceLayerDef {
+    pub surface_z: SurfaceZ,
+    pub threshold: f32,
+    pub scale: f64,
+    pub min_distance_from_spawn: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceProfileDef {
+    pub base_z: SurfaceZ,
+    pub starting_area_z: SurfaceZ,
+    pub layers: Vec<SurfaceLayerDef>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ResourceRuleDef {
     pub resource: String,
     pub item_def_id: String,
@@ -93,6 +108,7 @@ pub struct WorldGenProfile {
     pub id: String,
     pub starting_area: StartingAreaDef,
     pub terrain_layers: Vec<TerrainLayerDef>,
+    pub surface: SurfaceProfileDef,
     pub resources: Vec<ResourceRuleDef>,
     pub starting_resources: Vec<StartingResourceDef>,
 }
@@ -101,6 +117,7 @@ pub struct WorldGenerator {
     seed: u64,
     profile: WorldGenProfile,
     terrain_fields: BTreeMap<String, NoiseField>,
+    surface_fields: Vec<NoiseField>,
 }
 
 impl WorldGenerator {
@@ -115,11 +132,25 @@ impl WorldGenerator {
                 )
             })
             .collect();
+        let surface_fields = profile
+            .surface
+            .layers
+            .iter()
+            .enumerate()
+            .map(|(index, layer)| {
+                NoiseField::new(
+                    seed,
+                    &format!("surface_z:{}:{}", layer.surface_z, index),
+                    layer.scale,
+                )
+            })
+            .collect();
 
         Self {
             seed,
             profile,
             terrain_fields,
+            surface_fields,
         }
     }
 
@@ -150,7 +181,7 @@ impl WorldGenerator {
                 terrain_tiles.push(GeneratedTerrainTile {
                     pos,
                     terrain_id,
-                    surface_z: DEFAULT_SURFACE_Z,
+                    surface_z: self.surface_z_at(pos),
                 });
             }
         }
@@ -194,6 +225,25 @@ impl WorldGenerator {
         }
 
         "ground".to_string()
+    }
+
+    fn surface_z_at(&self, pos: TilePos) -> SurfaceZ {
+        if is_inside_starting_area(&self.profile, pos) {
+            return self.profile.surface.starting_area_z;
+        }
+
+        let distance = distance_from_spawn(pos);
+        let mut surface_z = self.profile.surface.base_z;
+        for (layer, field) in self.profile.surface.layers.iter().zip(&self.surface_fields) {
+            if distance < layer.min_distance_from_spawn as f32 {
+                continue;
+            }
+            if field.sample(pos.x, pos.y) >= layer.threshold {
+                surface_z = layer.surface_z;
+            }
+        }
+
+        surface_z
     }
 
     fn starting_resource_tiles(
@@ -453,6 +503,24 @@ pub fn default_profile() -> WorldGenProfile {
                 min_distance_from_spawn: 56,
             },
         ],
+        surface: SurfaceProfileDef {
+            base_z: DEFAULT_SURFACE_Z,
+            starting_area_z: DEFAULT_SURFACE_Z,
+            layers: vec![
+                SurfaceLayerDef {
+                    surface_z: 1,
+                    threshold: 0.68,
+                    scale: 128.0,
+                    min_distance_from_spawn: 72,
+                },
+                SurfaceLayerDef {
+                    surface_z: 2,
+                    threshold: 0.82,
+                    scale: 96.0,
+                    min_distance_from_spawn: 128,
+                },
+            ],
+        },
         resources: vec![
             resource_rule(
                 "iron_ore_patch",
@@ -673,7 +741,9 @@ mod tests {
 
     #[test]
     fn generated_terrain_tiles_default_to_base_surface_level() {
-        let generator = WorldGenerator::new_default(123);
+        let mut profile = default_profile();
+        profile.surface.layers.clear();
+        let generator = WorldGenerator::new(123, profile);
         let generated = generator.generate_square_around_spawn(4);
 
         assert!(
@@ -681,6 +751,40 @@ mod tests {
                 .terrain_tiles
                 .iter()
                 .all(|tile| tile.surface_z == crate::ids::DEFAULT_SURFACE_Z)
+        );
+    }
+
+    #[test]
+    fn surface_layers_can_generate_non_default_z_outside_start() {
+        let generator = WorldGenerator::new_default(123);
+        let generated = generator.generate_square_around_spawn(192);
+
+        assert!(
+            generated
+                .terrain_tiles
+                .iter()
+                .any(|tile| tile.surface_z != crate::ids::DEFAULT_SURFACE_Z)
+        );
+    }
+
+    #[test]
+    fn starting_area_keeps_configured_surface_z() {
+        let mut profile = default_profile();
+        profile.surface.starting_area_z = 3;
+        profile.surface.layers = vec![SurfaceLayerDef {
+            surface_z: 1,
+            threshold: 0.0,
+            scale: 8.0,
+            min_distance_from_spawn: 0,
+        }];
+        let generator = WorldGenerator::new(123, profile);
+        let generated = generator.generate_square_around_spawn(8);
+
+        assert!(
+            generated
+                .terrain_tiles
+                .iter()
+                .all(|tile| tile.surface_z == 3)
         );
     }
 

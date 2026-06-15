@@ -235,6 +235,7 @@ pub const CORE_TRANSPORT_BEHAVIOR_ID: &str = "core:transport";
 pub const CORE_INSERTER_BEHAVIOR_ID: &str = "core:inserter";
 pub const CORE_UNDERGROUND_BEHAVIOR_ID: &str = "core:underground";
 pub const CORE_SPLITTER_BEHAVIOR_ID: &str = "core:splitter";
+pub const CORE_CONVEYOR_LIFT_BEHAVIOR_ID: &str = "core:conveyor_lift";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoreBuildingBehavior {
@@ -252,6 +253,9 @@ pub enum CoreBuildingDriver {
     Underground {
         speed_units_per_tick: UnitsPerTick,
         max_range_tiles: u8,
+    },
+    ConveyorLift {
+        speed_units_per_tick: UnitsPerTick,
     },
     Splitter {
         speed_units_per_tick: UnitsPerTick,
@@ -288,6 +292,16 @@ impl CoreBuildingBehavior {
             driver: CoreBuildingDriver::Underground {
                 speed_units_per_tick,
                 max_range_tiles,
+            },
+        }
+    }
+
+    pub fn conveyor_lift(speed_units_per_tick: UnitsPerTick) -> Self {
+        Self {
+            behavior_id: CORE_CONVEYOR_LIFT_BEHAVIOR_ID.to_string(),
+            config: BTreeMap::new(),
+            driver: CoreBuildingDriver::ConveyorLift {
+                speed_units_per_tick,
             },
         }
     }
@@ -803,6 +817,23 @@ impl CoreCatalog {
                     inventories: Vec::new(),
                     inserter_deposit_limits: Vec::new(),
                     behavior: CoreBuildingBehavior::underground(UnitsPerTick::new(4), 4),
+                    power: PowerDef::none(),
+                },
+                CoreBuildingDef {
+                    id: "basic_conveyor_lift".to_string(),
+                    kind: CoreBuildingKind::Passive,
+                    footprint: rectangle(1, 1),
+                    rotate_footprint: true,
+                    inputs: Vec::new(),
+                    outputs: vec![CorePortDef {
+                        role: CorePortRole::BeltLane,
+                        side: CorePortSide::OutputDirection,
+                        offsets: vec![0],
+                        accepts: Vec::new(),
+                    }],
+                    inventories: Vec::new(),
+                    inserter_deposit_limits: Vec::new(),
+                    behavior: CoreBuildingBehavior::conveyor_lift(UnitsPerTick::new(4)),
                     power: PowerDef::none(),
                 },
                 CoreBuildingDef {

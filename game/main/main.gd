@@ -47,6 +47,9 @@ const CAMERA_MIN_ELEVATION := deg_to_rad(30.0)
 const CAMERA_MAX_ELEVATION := deg_to_rad(76.0)
 const CAMERA_FAR_PADDING := 32.0
 const PLAYER_COLLISION_RADIUS := 0.32
+const SURFACE_LEVEL_HEIGHT := 1.0
+const PICK_SURFACE_MIN_Z := -16
+const PICK_SURFACE_MAX_Z := 16
 const SUN_ORBIT_RADIUS := 48.0
 const SUNRISE_TINT := Color(1.0, 0.58, 0.32, 1.0)
 const MIDDAY_TINT := Color(1.0, 0.86, 0.62, 1.0)
@@ -128,6 +131,7 @@ func _ready() -> void:
 	player.can_move_to = Callable(self, "_is_player_position_walkable")
 	_update_camera()
 	_sync_world_around_camera(true)
+	_sync_player_surface_y()
 	hotbar.selected.connect(_on_hotbar_selected)
 	hotbar.assignment_requested.connect(_on_hotbar_assignment_requested)
 	build_ghost_root = BuildGhostScene.instantiate()
@@ -199,6 +203,7 @@ func _process(delta: float) -> void:
 		inventory_controller.update()
 	_update_camera()
 	_sync_world_around_camera(false)
+	_sync_player_surface_y()
 	_update_build_preview()
 	if map_overlay_controller != null:
 		map_overlay_controller.process(delta)
@@ -462,6 +467,27 @@ func _ensure_sim_generated_for_chunk_rect(chunk_rect: Rect2i) -> void:
 	var min_tile := min_chunk * chunk_size
 	var max_tile := (max_chunk + Vector2i.ONE) * chunk_size - Vector2i.ONE
 	sim.ensure_generated_rect(min_tile.x, min_tile.y, max_tile.x, max_tile.y)
+
+
+func _sync_player_surface_y() -> void:
+	if player == null:
+		return
+	var position := player.global_position
+	var surface_y := _surface_y_at_world_position(position)
+	if is_equal_approx(position.y, surface_y):
+		return
+	player.global_position = Vector3(position.x, surface_y, position.z)
+
+
+func _surface_y_at_world_position(position: Vector3) -> float:
+	return float(_surface_z_at_world_position(position)) * SURFACE_LEVEL_HEIGHT
+
+
+func _surface_z_at_world_position(position: Vector3) -> int:
+	if sim == null or not sim.has_method("surface_z_at_tile"):
+		return 0
+	var tile := Vector2i(int(round(position.x)), int(round(position.z)))
+	return int(sim.surface_z_at_tile(tile.x, tile.y))
 
 
 func _create_map_overlays() -> void:
@@ -788,15 +814,34 @@ func _mouse_ground_tile() -> Variant:
 	var mouse_position := get_viewport().get_mouse_position()
 	var ray_origin := camera.project_ray_origin(mouse_position)
 	var ray_direction := camera.project_ray_normal(mouse_position)
+	return _surface_tile_for_ray(ray_origin, ray_direction)
+
+
+func _surface_tile_for_ray(ray_origin: Vector3, ray_direction: Vector3) -> Variant:
 	if abs(ray_direction.y) < 0.0001:
 		return null
 
-	var distance := -ray_origin.y / ray_direction.y
-	if distance < 0.0:
-		return null
+	var closest_tile: Variant = null
+	var closest_distance := INF
+	for surface_z in range(PICK_SURFACE_MIN_Z, PICK_SURFACE_MAX_Z + 1):
+		var surface_y := float(surface_z) * SURFACE_LEVEL_HEIGHT
+		var distance := (surface_y - ray_origin.y) / ray_direction.y
+		if distance < 0.0 or distance >= closest_distance:
+			continue
+		var hit := ray_origin + ray_direction * distance
+		var tile := Vector2i(int(round(hit.x)), int(round(hit.z)))
+		if _surface_z_at_tile(tile) != surface_z:
+			continue
+		closest_tile = tile
+		closest_distance = distance
 
-	var hit := ray_origin + ray_direction * distance
-	return Vector2i(int(round(hit.x)), int(round(hit.z)))
+	return closest_tile
+
+
+func _surface_z_at_tile(tile: Vector2i) -> int:
+	if sim == null or not sim.has_method("surface_z_at_tile"):
+		return 0
+	return int(sim.surface_z_at_tile(tile.x, tile.y))
 
 
 func _render_buildings_from_sim() -> void:
@@ -896,6 +941,9 @@ func _footprint_overlaps_player(footprint: Array) -> bool:
 
 
 func _is_player_position_walkable(position: Vector3) -> bool:
+	if _surface_z_at_world_position(position) != _surface_z_at_world_position(player.global_position):
+		return false
+
 	var min_tile_x := int(ceil(position.x - 0.5 - PLAYER_COLLISION_RADIUS))
 	var max_tile_x := int(floor(position.x + 0.5 + PLAYER_COLLISION_RADIUS))
 	var min_tile_y := int(ceil(position.z - 0.5 - PLAYER_COLLISION_RADIUS))

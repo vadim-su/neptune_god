@@ -24,6 +24,7 @@ var cached_buildings_key := ""
 var fullscreen_snapshot_chunk_rect_valid := false
 var fullscreen_snapshot_chunk_rect := Rect2i()
 var fullscreen_snapshot_chunk_grid_size := Vector2i.ZERO
+var current_surface_z := 0
 
 
 func _ready() -> void:
@@ -299,9 +300,14 @@ func apply_chunk_snapshots(
 func update_player_position() -> void:
 	if minimap == null or map_overlay == null or player == null:
 		return
+	var next_surface_z := int(round(player.global_position.y))
+	var surface_z_changed := next_surface_z != current_surface_z
+	current_surface_z = next_surface_z
 	minimap.visible = not map_overlay.is_fullscreen_open()
 	minimap.set_player_position(player.global_position)
 	map_overlay.set_player_position(player.global_position)
+	if surface_z_changed:
+		mark_dirty()
 
 
 func refresh_resource_selection() -> void:

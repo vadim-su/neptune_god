@@ -60,6 +60,13 @@ class FakeGeneratedRectSim:
 		rect_calls.append(Rect2i(Vector2i(min_x, min_y), Vector2i(max_x - min_x + 1, max_y - min_y + 1)))
 
 
+class FakeSurfaceSim:
+	var surface_z_by_tile := {}
+
+	func surface_z_at_tile(x: int, y: int) -> int:
+		return int(surface_z_by_tile.get(Vector2i(x, y), 0))
+
+
 func before_each() -> void:
 	ItemCatalogScript.load_from_rows([
 		{"id": "tin_ore", "display_name": "Tin ore", "color": "#8A8F91"},
@@ -140,6 +147,50 @@ func test_streaming_center_stays_on_player_while_fullscreen_map_moves() -> void:
 	main.map_overlay = overlay
 
 	assert_eq(main._streaming_center_position(Vector3.ZERO), Vector3.ZERO)
+
+
+func test_main_surface_y_uses_sim_surface_z_at_player_tile() -> void:
+	var main = autofree(MainScript.new())
+	var sim := FakeSurfaceSim.new()
+	sim.surface_z_by_tile[Vector2i(3, -2)] = 2
+	main.sim = sim
+
+	assert_almost_eq(main._surface_y_at_world_position(Vector3(3.1, 0.0, -2.2)), 2.0, 0.001)
+
+
+func test_main_surface_ray_picking_uses_tile_surface_z() -> void:
+	var main = autofree(MainScript.new())
+	var sim := FakeSurfaceSim.new()
+	sim.surface_z_by_tile[Vector2i(2, 0)] = 1
+	main.sim = sim
+
+	var picked: Variant = main._surface_tile_for_ray(Vector3(2.0, 4.0, 0.0), Vector3(0.0, -1.0, 0.0))
+
+	assert_eq(picked, Vector2i(2, 0))
+
+
+func test_main_surface_ray_picking_ignores_wrong_level_intersection() -> void:
+	var main = autofree(MainScript.new())
+	var sim := FakeSurfaceSim.new()
+	sim.surface_z_by_tile[Vector2i(2, 0)] = 0
+	main.sim = sim
+
+	var picked: Variant = main._surface_tile_for_ray(Vector3(2.0, 4.0, 0.0), Vector3(0.0, -1.0, 0.0))
+
+	assert_eq(picked, Vector2i(2, 0))
+
+
+func test_main_blocks_player_step_between_different_surface_z_levels() -> void:
+	var main = autofree(MainScript.new())
+	var sim := FakeSurfaceSim.new()
+	sim.surface_z_by_tile[Vector2i(0, 0)] = 0
+	sim.surface_z_by_tile[Vector2i(1, 0)] = 1
+	main.sim = sim
+	main.player = add_child_autoqfree(PlayerController.new()) as PlayerController
+	main.player.global_position = Vector3(0.0, 0.0, 0.0)
+
+	assert_false(main._is_player_position_walkable(Vector3(1.0, 0.0, 0.0)))
+	assert_true(main._is_player_position_walkable(Vector3(0.2, 0.0, 0.0)))
 
 
 func test_fullscreen_map_view_change_does_not_sync_world_chunks() -> void:
@@ -702,6 +753,25 @@ func test_environment_terrain_render_data_offsets_vertices_by_surface_z() -> voi
 	assert_almost_eq(vertices[0].y, environment.TERRAIN_Y + 2.0 * environment.SURFACE_LEVEL_HEIGHT, 0.001)
 
 
+func test_environment_terrain_render_data_adds_height_edge_against_lower_margin_tile() -> void:
+	var environment = autofree(EnvironmentScript.new())
+	var tiles := [
+		{"x": 0, "y": 0, "terrain": "ground", "resource": "", "surface_z": 1, "render": true},
+		{"x": 1, "y": 0, "terrain": "ground", "resource": "", "surface_z": 0, "render": false},
+	]
+
+	var render_data: Dictionary = environment._terrain_chunk_render_data(tiles)
+	var vertices: PackedVector3Array = render_data["batches"][0]["vertices"]
+	var normals: PackedVector3Array = render_data["batches"][0]["normals"]
+
+	assert_eq(vertices.size(), 13)
+	assert_eq(normals.size(), vertices.size())
+	assert_almost_eq(vertices[9].x, 0.5, 0.001)
+	assert_almost_eq(vertices[9].y, environment.TERRAIN_Y + environment.SURFACE_LEVEL_HEIGHT, 0.001)
+	assert_almost_eq(vertices[11].x, 0.5, 0.001)
+	assert_almost_eq(vertices[11].y, environment.TERRAIN_Y, 0.001)
+
+
 func test_environment_resource_render_data_splits_large_deposits_into_instance_batches() -> void:
 	var environment = autofree(EnvironmentScript.new())
 	var tiles := []
@@ -812,6 +882,27 @@ func test_render_chunk_tile_provider_loads_visible_terrain_through_internal_back
 	assert_true(environment._terrain_chunks.has(Vector2i(0, 0)))
 	assert_true(environment._terrain_chunks[Vector2i(0, 0)].visible)
 	assert_gt(environment.visible_chunk_snapshot()["chunks"].size(), 0)
+
+
+func test_chunk_tile_provider_defaults_legacy_worldgen_profile_to_flat_surface_z() -> void:
+	var tile_provider := NeptuneChunkTileProvider.new()
+	assert_true(tile_provider.configure_worldgen(
+		[{"id": "legacy_patch", "item": "iron_ore"}],
+		[{"id": "legacy-profile"}]
+	))
+
+	var job_id := int(tile_provider.start_chunk_tiles_job(0, 0, 0))
+	await wait_until(
+		func() -> bool:
+			return tile_provider.is_chunk_tiles_job_ready(job_id),
+		1.0
+	)
+	var tiles: Array = tile_provider.take_chunk_tiles_job(job_id)
+
+	assert_gt(tiles.size(), 0)
+	for raw_tile: Variant in tiles:
+		var tile: Dictionary = raw_tile
+		assert_eq(int(tile.get("surface_z", 0)), 0)
 
 
 func test_environment_resource_material_uses_item_catalog_color_for_modded_resource() -> void:

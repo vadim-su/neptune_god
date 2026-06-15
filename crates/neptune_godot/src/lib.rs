@@ -29,8 +29,7 @@ use sim_core::ids::BuildingId;
 use sim_core::ids::CHUNK_SIZE;
 use sim_core::ids::ChunkPos;
 use sim_core::ids::ItemKindId;
-use sim_core::ids::SurfaceZ;
-use sim_core::ids::TilePos;
+use sim_core::ids::{DEFAULT_SURFACE_Z, SurfaceZ, TilePos};
 use sim_core::inventory::{InsertMode, SimInventorySnapshot};
 use sim_core::topology::graph::Direction;
 use sim_core::units::DistanceUnits;
@@ -38,8 +37,8 @@ use sim_core::units::UnitsPerTick;
 use sim_core::world::SimWorld;
 use sim_core::worldgen::{
     DEFAULT_WORLD_SEED, DistanceCurveDef, IntRange, ProfileRangePair, ResourceFrequencyDef,
-    ResourceRuleDef, StartingAreaDef, StartingResourceDef, TerrainLayerDef, WorldGenProfile,
-    WorldGenerator, default_profile,
+    ResourceRuleDef, StartingAreaDef, StartingResourceDef, SurfaceLayerDef, SurfaceProfileDef,
+    TerrainLayerDef, WorldGenProfile, WorldGenerator, default_profile,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -306,6 +305,7 @@ fn build_worldgen_profile_from_rows(
             min_distance_from_spawn: u32_field(&row, "min_distance_from_spawn").unwrap_or(0),
         })
         .collect::<Vec<_>>();
+    let surface = surface_profile_from_row(&profile_row);
     let resources = array_field(&profile_row, "resources")
         .iter_shared()
         .filter_map(|raw| raw.try_to::<VarDictionary>().ok())
@@ -320,6 +320,7 @@ fn build_worldgen_profile_from_rows(
         id: profile_id,
         starting_area,
         terrain_layers,
+        surface,
         resources,
         starting_resources,
     })
@@ -422,6 +423,33 @@ fn starting_resource_from_row(
         amount_range: range_field(row, "amount_range", 6000, 14000),
         allowed_terrains: non_empty_string_array_field(row, "allowed_terrains", &["ground"]),
     })
+}
+
+fn surface_profile_from_row(profile_row: &VarDictionary) -> SurfaceProfileDef {
+    let Some(surface) = dictionary_field(profile_row, "surface") else {
+        return SurfaceProfileDef {
+            base_z: 0,
+            starting_area_z: 0,
+            layers: Vec::new(),
+        };
+    };
+
+    SurfaceProfileDef {
+        base_z: surface_z_field(&surface, "base_z").unwrap_or(0),
+        starting_area_z: surface_z_field(&surface, "starting_area_z").unwrap_or(0),
+        layers: array_field(&surface, "layers")
+            .iter_shared()
+            .filter_map(|raw| raw.try_to::<VarDictionary>().ok())
+            .map(|row| SurfaceLayerDef {
+                surface_z: surface_z_field(&row, "z")
+                    .or_else(|| surface_z_field(&row, "surface_z"))
+                    .unwrap_or(0),
+                threshold: f64_field(&row, "threshold").unwrap_or(0.75) as f32,
+                scale: f64_field(&row, "scale").unwrap_or(96.0),
+                min_distance_from_spawn: u32_field(&row, "min_distance_from_spawn").unwrap_or(0),
+            })
+            .collect(),
+    }
 }
 
 fn range_pair_field(
@@ -820,6 +848,15 @@ fn behavior_from_row(
                 .unwrap_or(4)
                 .min(u8::MAX as u32) as u8,
         )),
+        "conveyorlift" | "conveyor_lift" | "lift" => {
+            Ok(CoreBuildingBehavior::conveyor_lift(UnitsPerTick::new(
+                behavior
+                    .as_ref()
+                    .and_then(|value| u32_field(value, "speed_units_per_tick"))
+                    .unwrap_or(4)
+                    .min(i32::MAX as u32) as i32,
+            )))
+        }
         "splitter" => Ok(CoreBuildingBehavior::splitter(UnitsPerTick::new(
             behavior
                 .as_ref()
@@ -1007,6 +1044,11 @@ fn i32_array_field(dictionary: &VarDictionary, key: &str) -> Vec<i32> {
         .iter_shared()
         .filter_map(|value| variant_i32(&value))
         .collect()
+}
+
+fn surface_z_field(dictionary: &VarDictionary, key: &str) -> Option<SurfaceZ> {
+    i32_field(dictionary, key)
+        .map(|value| value.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as SurfaceZ)
 }
 
 fn normalized_key(value: &str) -> String {
@@ -1483,6 +1525,14 @@ impl NeptuneSim {
             )
             .collect::<Vec<_>>();
         generated_tiles_to_var_array(&terrain_tiles, resources, self.map_min, self.map_max)
+    }
+
+    #[func]
+    pub fn surface_z_at_tile(&self, x: i32, y: i32) -> i32 {
+        if !self.ensure_configured("surface_z_at_tile") {
+            return i32::from(DEFAULT_SURFACE_Z);
+        }
+        i32::from(self.world.surface_z_at(TilePos::new(x, y)))
     }
 
     #[func]
@@ -2159,6 +2209,9 @@ fn belt_speed_tiles_per_second(world: &SimWorld, def_id: &str) -> f64 {
         | CoreBuildingDriver::Underground {
             speed_units_per_tick,
             ..
+        }
+        | CoreBuildingDriver::ConveyorLift {
+            speed_units_per_tick,
         }
         | CoreBuildingDriver::Splitter {
             speed_units_per_tick,

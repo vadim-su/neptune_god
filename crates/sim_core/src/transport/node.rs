@@ -22,6 +22,7 @@ pub enum TransportNodeKind {
     SideLoad { near_lane: usize },
     Splitter2x1,
     Underground,
+    ConveyorLift,
 }
 
 impl TransportNodeKind {
@@ -32,6 +33,7 @@ impl TransportNodeKind {
             Self::SideLoad { .. } => 2,
             Self::Splitter2x1 => 3,
             Self::Underground => 4,
+            Self::ConveyorLift => 5,
         }
     }
 }
@@ -390,6 +392,48 @@ impl TransportNode {
         }
     }
 
+    pub fn conveyor_lift(
+        id: TransportNodeId,
+        origin: TilePos,
+        output: TilePos,
+        direction: Direction,
+        input_line: LineId,
+        output_line: LineId,
+        distance: DistanceUnits,
+    ) -> Self {
+        let mut ports = Vec::with_capacity(4);
+        for lane in 0..2 {
+            ports.push(TransportPort {
+                node: id,
+                role: TransportPortRole::Input,
+                tile: origin,
+                side: Some(direction.opposite()),
+                lane,
+                line: input_line,
+            });
+        }
+        for lane in 0..2 {
+            ports.push(TransportPort {
+                node: id,
+                role: TransportPortRole::Output,
+                tile: output,
+                side: Some(direction),
+                lane,
+                line: output_line,
+            });
+        }
+        Self {
+            id,
+            kind: TransportNodeKind::ConveyorLift,
+            sort_tile: origin,
+            direction: Some(direction),
+            ports,
+            runtime: TransportNodeRuntime::Underground(UndergroundTransportRuntime::empty(
+                distance,
+            )),
+        }
+    }
+
     pub fn key(&self) -> TransportNodeKey {
         TransportNodeKey {
             sort_tile: self.sort_tile,
@@ -407,7 +451,8 @@ impl TransportNode {
             TransportNodeKind::BlockedFront
             | TransportNodeKind::EndTransfer
             | TransportNodeKind::Splitter2x1
-            | TransportNodeKind::Underground => self
+            | TransportNodeKind::Underground
+            | TransportNodeKind::ConveyorLift => self
                 .ports
                 .iter()
                 .find(|port| port.role == TransportPortRole::Input)

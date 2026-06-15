@@ -2105,6 +2105,27 @@ impl SimWorld {
         Ok(())
     }
 
+    fn ensure_conveyor_lift_target(
+        &self,
+        origin: TilePos,
+        direction: Direction,
+    ) -> Result<(), SimCommandError> {
+        let output = direction.output_pos(origin);
+        self.ensure_buildable(output)?;
+        if self.surface_z_at(output) == self.surface_z_at(origin) {
+            return Err(SimCommandError::UnevenTerrain {
+                origin,
+                pos: output,
+                expected_z: self.surface_z_at(origin),
+                found_z: self.surface_z_at(output),
+            });
+        }
+        if self.building_occupancy.contains_key(&output) {
+            return Err(SimCommandError::OccupiedTile { pos: output });
+        }
+        Ok(())
+    }
+
     pub fn set_occupied_surface_tiles(&mut self, tiles: impl IntoIterator<Item = TilePos>) {
         self.occupied_surface_tiles = tiles.into_iter().collect();
         self.occupied_surface_tiles
@@ -2506,6 +2527,9 @@ impl SimWorld {
             }
             CoreBuildingDriver::Underground { .. } => {
                 return Err(SimCommandError::InvalidPort);
+            }
+            CoreBuildingDriver::ConveyorLift { .. } => {
+                self.ensure_conveyor_lift_target(origin, direction)?;
             }
             CoreBuildingDriver::Splitter { .. } => {}
             CoreBuildingDriver::Noop

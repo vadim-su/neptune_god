@@ -260,7 +260,7 @@ func test_map_overlay_uses_precomputed_chunk_snapshot_key_without_rehashing_chun
 
 func test_map_overlay_regular_grid_snapshot_uses_cached_chunk_building_keys() -> void:
 	var overlay = add_child_autoqfree(MapOverlayScript.new())
-	overlay.configure_fullscreen()
+	overlay.configure_minimap()
 	var chunks := [
 		{
 			"key": "0:0",
@@ -743,6 +743,45 @@ func test_map_overlay_schematic_texture_leaves_unexplored_tiles_transparent() ->
 	assert_gt(explored.a, 0.99)
 
 
+func test_map_overlay_schematic_filters_tiles_to_current_surface_z() -> void:
+	var overlay = add_child_autoqfree(MapOverlayScript.new())
+	overlay.configure_minimap()
+	var bounds := Rect2i(Vector2i.ZERO, Vector2i(2, 1))
+	var chunks := [{
+		"key": "0:0",
+		"bounds": bounds,
+		"tiles": [
+			{"x": 0, "y": 0, "terrain": "ground", "resource": "", "amount": 0, "surface_z": 0, "render": true},
+			{"x": 1, "y": 0, "terrain": "stone", "resource": "", "amount": 0, "surface_z": 1, "render": true},
+		],
+	}]
+
+	overlay.set_chunk_snapshot(chunks, bounds, [], Vector3(0.0, 1.0, 0.0), bounds)
+	await wait_until(
+		func() -> bool:
+			return overlay.uploaded_map_chunk_texture_count_for_tests() > 0,
+		1.0
+	)
+	var image: Image = overlay.uploaded_map_chunk_image_for_tests("0:0")
+
+	assert_eq(image.get_pixel(0, 0).a, 0.0)
+	assert_gt(image.get_pixel(1, 0).a, 0.99)
+
+
+func test_map_overlay_height_shades_non_zero_surface_tiles() -> void:
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	var base := Color(0.20, 0.30, 0.40, 1.0)
+
+	var flat: Color = overlay.height_shaded_color_for_tests(base, 0)
+	var raised: Color = overlay.height_shaded_color_for_tests(base, 2)
+
+	assert_eq(flat, base)
+	assert_gt(raised.r, base.r)
+	assert_gt(raised.g, base.g)
+	assert_gt(raised.b, base.b)
+
+
 func test_map_overlay_fades_explored_tiles_outside_current_visible_rect() -> void:
 	var overlay = autofree(MapOverlayScript.new())
 	overlay.configure_fullscreen()
@@ -765,5 +804,3 @@ func test_map_overlay_detailed_view_tracks_current_visible_tiles_without_texture
 
 	assert_true(overlay.tile_uses_detailed_world_for_tests(Vector2i(0, 0)))
 	assert_false(overlay.tile_uses_detailed_world_for_tests(Vector2i(1, 0)))
-
-
