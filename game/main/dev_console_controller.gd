@@ -1,13 +1,15 @@
 extends RefCounted
 class_name DevConsoleController
 
-const ItemCatalogScript := preload("res://game/items/item_catalog.gd")
+const DevConsoleCommandContextScript := preload("res://game/main/dev_console/command_context.gd")
+const DevConsoleCommandRegistryScript := preload("res://game/main/dev_console/command_registry.gd")
+const DevConsoleBuiltinCommandsScript := preload("res://game/main/dev_console/builtin_commands.gd")
 
 var dev_console: Node
-var sim: Variant
-var inventory_window: Node
-var inventory_refresh: Callable
-var selected_object_snapshot: Callable
+var context: RefCounted
+var registry: RefCounted
+var _builtin_commands: RefCounted
+var _mod_command_providers: Array = []
 
 
 func setup(
@@ -15,92 +17,77 @@ func setup(
 	simulation: Variant,
 	inventory_window_node: Node,
 	refresh_inventory: Callable,
-	selected_snapshot: Callable
+	selected_snapshot: Callable,
+	teleport_player: Callable = Callable()
 ) -> void:
 	dev_console = console_node
-	sim = simulation
-	inventory_window = inventory_window_node
-	inventory_refresh = refresh_inventory
-	selected_object_snapshot = selected_snapshot
+	registry = DevConsoleCommandRegistryScript.new()
+	context = DevConsoleCommandContextScript.new()
+	context.setup(
+		console_node,
+		simulation,
+		inventory_window_node,
+		refresh_inventory,
+		selected_snapshot,
+		registry,
+		teleport_player
+	)
+	_builtin_commands = DevConsoleBuiltinCommandsScript.new()
+	registry.register_provider(_builtin_commands)
+	_register_manifest_command_providers()
 	if dev_console != null:
 		dev_console.command_submitted.connect(submit_command)
 		dev_console.set_completions(completions())
 
 
 func submit_command(line: String) -> void:
-	var parts := line.split(" ", false)
-	if parts.is_empty():
-		return
-
-	match str(parts[0]).to_lower():
-		"help":
-			dev_console.append_lines([
-				"commands: help, clear, status, items, give <item> <amount>",
-				"F1 toggles console. Up/Down navigate history. Tab completes item ids.",
-			])
-		"clear":
-			dev_console.clear_scrollback()
-		"status":
-			dev_console.append_output(_status_line())
-		"items":
-			dev_console.append_output("items: %s" % "  ".join(_item_ids()))
-		"give":
-			_execute_give_command(parts)
-		_:
-			dev_console.append_output("Unknown command '%s'. Use 'help' for commands." % str(parts[0]))
+	registry.execute_line(context, line)
 
 
 func completions() -> Array:
-	var values: Array = ["help", "clear", "status", "items", "give"]
-	for item_id: String in _item_ids():
-		values.append(item_id)
-	return values
+	return registry.completion_values(context)
 
 
-func _status_line() -> String:
-	var selected := _selected_object_status()
-	return "tick=%d digest=%d buildings=%d selected=%s" % [
-		sim.core_tick(),
-		sim.digest(),
-		sim.building_count(),
-		selected,
-	]
+func register_command(spec: Dictionary) -> bool:
+	var result: bool = registry.register_command_spec(spec)
+	if result and dev_console != null:
+		dev_console.set_completions(completions())
+	return result
 
 
-func _selected_object_status() -> String:
-	if not selected_object_snapshot.is_valid():
-		return "none"
-	var snapshot: Dictionary = selected_object_snapshot.call()
-	var selected_object: Dictionary = snapshot.get("object", {})
-	if selected_object.is_empty():
-		return "none"
-	return "%s #%d" % [
-		str(selected_object.get("def_id", "")),
-		int(snapshot.get("id", -1)),
-	]
+func register_command_provider(provider: Variant) -> bool:
+	var result: bool = registry.register_provider(provider)
+	if result:
+		_mod_command_providers.append(provider)
+		if dev_console != null:
+			dev_console.set_completions(completions())
+	return result
 
 
-func _execute_give_command(parts: PackedStringArray) -> void:
-	if parts.size() < 2:
-		dev_console.append_output("Usage: give <item> <amount>")
+func _register_manifest_command_providers() -> void:
+	if dev_console == null or not dev_console.is_inside_tree():
 		return
-	var item_id := str(parts[1])
-	var amount := 1
-	if parts.size() >= 3:
-		amount = max(1, int(parts[2]))
-	if sim.give_item(item_id, amount):
-		dev_console.append_output("Added %s x%d" % [item_id, amount])
-		if inventory_window != null and inventory_window.is_open() and inventory_refresh.is_valid():
-			inventory_refresh.call()
+
+	var root := dev_console.get_tree().root
+	if not root.has_meta("mod_registry"):
 		return
-	dev_console.append_output("Could not add %s x%d" % [item_id, amount])
+
+	var mod_registry: Variant = root.get_meta("mod_registry")
+	if mod_registry == null or not mod_registry.has_method("dev_console_command_paths"):
+		return
+
+	for path: String in mod_registry.dev_console_command_paths():
+		_register_command_provider_script(path)
 
 
-func _item_ids() -> Array[String]:
-	var ids: Array[String] = []
-	for raw_definition: Variant in ItemCatalogScript.definitions():
-		var definition: Dictionary = raw_definition
-		var id := str(definition.get("id", ""))
-		if not id.is_empty():
-			ids.append(id)
-	return ids
+func _register_command_provider_script(path: String) -> void:
+	if path.is_empty() or not ResourceLoader.exists(path):
+		push_warning("Dev console command provider does not exist: %s" % path)
+		return
+	var script: Variant = load(path)
+	if script == null:
+		push_warning("Dev console command provider failed to load: %s" % path)
+		return
+	var provider: Variant = script.new()
+	if not register_command_provider(provider):
+		push_warning("Dev console command provider has no register_dev_console_commands(): %s" % path)

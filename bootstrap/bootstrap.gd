@@ -17,6 +17,7 @@ func _boot() -> void:
 	if not _mod_registry.load_mods():
 		_show_boot_error("Mod loading failed:\n%s" % "\n".join(_mod_registry.errors()))
 		return
+	get_tree().root.set_meta("mod_registry", _mod_registry)
 
 	var main_manifest: Dictionary = _mod_registry.main_manifest()
 	if main_manifest.is_empty():

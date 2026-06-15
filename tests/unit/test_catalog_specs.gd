@@ -1,6 +1,7 @@
 extends "res://addons/gut/test.gd"
 
 const CatalogRegistryScript := preload("res://bootstrap/catalog_registry.gd")
+const ModRegistryScript := preload("res://bootstrap/mod_registry.gd")
 const ItemCatalogScript := preload("res://game/items/item_catalog.gd")
 const BuildingCatalogScript := preload("res://game/buildings/building_catalog.gd")
 const RecipeCatalogScript := preload("res://game/recipes/recipe_catalog.gd")
@@ -101,6 +102,31 @@ func test_catalog_registry_rows_are_deep_copies() -> void:
 	var second_read: Array = registry.rows("items")
 	assert_eq(second_read[0]["meta"]["hardness"], 1.0)
 	assert_eq(second_read[0]["drops"][0]["amount"], 1.0)
+
+
+func test_mod_registry_collects_dev_console_command_provider_paths() -> void:
+	var registry = ModRegistryScript.new()
+	var manifests: Array[Dictionary] = [
+		{
+			"id": "main",
+			"dev_console": "res://mods/main/dev_console_commands.gd",
+		},
+		{
+			"id": "extra",
+			"dev_console": ["res://mods/extra/dev_console_commands.gd"],
+			"dev_console_commands": [
+				"res://mods/extra/debug_commands.gd",
+				"res://mods/extra/dev_console_commands.gd",
+			],
+		},
+	]
+	registry._loaded_mods = manifests
+
+	assert_eq(registry.dev_console_command_paths(), [
+		"res://mods/main/dev_console_commands.gd",
+		"res://mods/extra/dev_console_commands.gd",
+		"res://mods/extra/debug_commands.gd",
+	])
 
 
 func test_building_catalog_defaults_describe_gameplay_role_contracts() -> void:

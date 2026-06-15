@@ -40,6 +40,7 @@ Example manifest:
     "worldgen": ["res://assets/catalog/worldgen.json"],
     "player": ["res://assets/catalog/player.json"]
   },
+  "dev_console": ["res://mods/main/dev_console_commands.gd"],
   "dependencies": []
 }
 ```
@@ -135,6 +136,44 @@ override anything.
 The merged rows are also passed to the Rust `NeptuneSim` bridge. Rust then
 builds the active `CoreCatalog` and `WorldGenProfile` from mod data instead of
 using hardcoded definitions.
+
+## Dev console commands
+
+Mods can register runtime dev console commands from their manifest:
+
+```json
+{
+  "dev_console": ["res://mods/extra_ores/dev_console_commands.gd"]
+}
+```
+
+Each script must instantiate without arguments and expose
+`register_dev_console_commands(registry)`. Register commands with a callable
+that receives `(context, parts)`:
+
+```gdscript
+extends RefCounted
+
+func register_dev_console_commands(registry: RefCounted) -> void:
+	registry.register_command(
+		"spawn_tin",
+		"Adds tin ore to the player inventory.",
+		"spawn_tin <amount>",
+		Callable(self, "_execute_spawn_tin"),
+		Callable(self, "_complete_spawn_tin")
+	)
+
+func _execute_spawn_tin(context: RefCounted, parts: PackedStringArray) -> void:
+	var amount := 1
+	if parts.size() >= 2:
+		amount = max(1, int(parts[1]))
+	if context.sim.give_item("tin_ore", amount):
+		context.append_output("Added tin_ore x%d" % amount)
+		context.refresh_inventory_if_open()
+
+func _complete_spawn_tin(_context: RefCounted) -> Array:
+	return ["tin_ore"]
+```
 
 Building rows keep UI fields at the top level and put simulation fields under
 `sim`:

@@ -33,6 +33,29 @@ func test_dev_console_controller_handles_status_items_and_unknown_commands() -> 
 	assert_eq(refresh_calls.size(), 0)
 
 
+func test_dev_console_help_lists_commands_as_vertical_bullets() -> void:
+	var console = add_child_autoqfree(FakeDevConsole.new())
+	var sim := FakeDevConsoleSim.new()
+	var inventory = add_child_autoqfree(FakeInventoryWindow.new())
+	var controller = autofree(DevConsoleControllerScript.new())
+	controller.setup(
+		console,
+		sim,
+		inventory,
+		func() -> void:
+			pass,
+		func() -> Dictionary:
+			return {}
+	)
+
+	controller.submit_command("help")
+
+	assert_eq(console.outputs[0], "commands:")
+	assert_true(console.outputs.has("- give <item> <amount> - Add an item stack to the player inventory."))
+	assert_true(console.outputs.has("- teleport <x> <z> - Move the player to world coordinates."))
+	assert_false((console.outputs[1] as String).begins_with("  "))
+
+
 func test_dev_console_controller_give_command_refreshes_open_inventory() -> void:
 	var console = add_child_autoqfree(FakeDevConsole.new())
 	var sim := FakeDevConsoleSim.new()
@@ -58,6 +81,61 @@ func test_dev_console_controller_give_command_refreshes_open_inventory() -> void
 	assert_eq(console.outputs[0], "Added iron_ore x3")
 	assert_eq(console.outputs[1], "Could not add missing x2")
 	assert_eq(refresh_calls.size(), 1)
+
+
+func test_dev_console_controller_teleports_player() -> void:
+	var console = add_child_autoqfree(FakeDevConsole.new())
+	var sim := FakeDevConsoleSim.new()
+	var inventory = add_child_autoqfree(FakeInventoryWindow.new())
+	var teleports: Array[Vector3] = []
+	var controller = autofree(DevConsoleControllerScript.new())
+	controller.setup(
+		console,
+		sim,
+		inventory,
+		func() -> void:
+			pass,
+		func() -> Dictionary:
+			return {},
+		func(position: Vector3) -> void:
+			teleports.append(position)
+	)
+
+	controller.submit_command("teleport 12.5 -4")
+	controller.submit_command("tp nope 8")
+
+	assert_eq(teleports, [Vector3(12.5, 0.0, -4.0)])
+	assert_eq(console.outputs[0], "Teleported player to x=12.50 z=-4.00")
+	assert_eq(console.outputs[1], "Usage: teleport <x> <z>")
+	assert_true(console.completions.has("teleport"))
+	assert_true(console.completions.has("tp"))
+
+
+func test_dev_console_controller_accepts_registered_command_providers() -> void:
+	var console = add_child_autoqfree(FakeDevConsole.new())
+	var sim := FakeDevConsoleSim.new()
+	var inventory = add_child_autoqfree(FakeInventoryWindow.new())
+	var controller = autofree(DevConsoleControllerScript.new())
+	controller.setup(
+		console,
+		sim,
+		inventory,
+		func() -> void:
+			pass,
+		func() -> Dictionary:
+			return {}
+	)
+
+	assert_true(controller.register_command_provider(FakeDevConsoleCommandProvider.new()))
+
+	controller.submit_command("ping alpha")
+	controller.submit_command("pong beta")
+
+	assert_eq(console.outputs[0], "provider:ping alpha")
+	assert_eq(console.outputs[1], "provider:pong beta")
+	assert_true(console.completions.has("ping"))
+	assert_true(console.completions.has("pong"))
+	assert_true(console.completions.has("provider_value"))
 
 
 func test_inventory_controller_toggle_shows_inventory_with_selected_object_snapshot() -> void:

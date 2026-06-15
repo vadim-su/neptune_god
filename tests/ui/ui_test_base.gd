@@ -138,6 +138,26 @@ class FakeDevConsoleSim:
 		return item_id == "iron_ore"
 
 
+class FakeDevConsoleCommandProvider:
+	extends RefCounted
+
+	func register_dev_console_commands(registry: RefCounted) -> void:
+		registry.register_command(
+			"ping",
+			"Test command provider hook.",
+			"ping",
+			Callable(self, "_execute_ping"),
+			Callable(self, "_complete_ping"),
+			["pong"]
+		)
+
+	func _execute_ping(context: RefCounted, parts: PackedStringArray) -> void:
+		context.append_output("provider:%s" % " ".join(parts))
+
+	func _complete_ping(_context: RefCounted) -> Array:
+		return ["provider_value"]
+
+
 class FakeInventoryWindow:
 	extends Node
 

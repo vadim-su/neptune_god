@@ -138,7 +138,8 @@ func _ready() -> void:
 		sim,
 		inventory_window,
 		Callable(inventory_controller, "update"),
-		Callable(self, "_selected_object_snapshot")
+		Callable(self, "_selected_object_snapshot"),
+		Callable(self, "_teleport_player")
 	)
 	_create_map_overlays()
 	catalog_selector = CatalogSelectorScene.instantiate()
@@ -430,6 +431,13 @@ func _preload_chunk_rect_for(visible_rect: Rect2i) -> Rect2i:
 
 func _streaming_center_position(player_position: Vector3) -> Vector3:
 	return player_position
+
+
+func _teleport_player(position: Vector3) -> void:
+	player.global_position = Vector3(position.x, player.global_position.y, position.z)
+	_update_camera()
+	_sync_world_around_camera(true)
+	_update_map_overlay_player_position()
 
 
 func _clamp_tile_to_visible_radius(tile: Vector2i, center: Vector2i) -> Vector2i:

@@ -71,6 +71,37 @@ func catalog_paths(catalog_kind: String) -> Array[String]:
 	return paths
 
 
+func dev_console_command_paths() -> Array[String]:
+	var paths: Array[String] = []
+	for manifest: Dictionary in _loaded_mods:
+		for path: String in _manifest_path_list(manifest, "dev_console"):
+			paths.append(path)
+		for path: String in _manifest_path_list(manifest, "dev_console_commands"):
+			if not paths.has(path):
+				paths.append(path)
+	return paths
+
+
+func _manifest_path_list(manifest: Dictionary, key: String) -> Array[String]:
+	var paths: Array[String] = []
+	var raw_value: Variant = manifest.get(key, [])
+	if raw_value is String:
+		var path := str(raw_value)
+		if not path.is_empty():
+			paths.append(path)
+		return paths
+	if not raw_value is Array:
+		if raw_value != null:
+			_warn("Mod %s %s field is not an array" % [str(manifest.get("id", "")), key])
+		return paths
+
+	for raw_path: Variant in raw_value:
+		var path := str(raw_path)
+		if not path.is_empty():
+			paths.append(path)
+	return paths
+
+
 func _discover_pack_files() -> Array[Dictionary]:
 	var candidates: Array[Dictionary] = []
 	var seen_paths := {}
