@@ -46,10 +46,18 @@ class FakeTileProvider:
 
 class FakeWorldStreamingController:
 	var sync_calls := 0
+	var result: Variant = true
 
-	func sync_around_position(_player_position: Vector3, _force := false) -> bool:
+	func sync_around_position(_player_position: Vector3, _force := false) -> Variant:
 		sync_calls += 1
-		return true
+		return result
+
+
+class FakeGeneratedRectSim:
+	var rect_calls: Array[Rect2i] = []
+
+	func ensure_generated_rect(min_x: int, min_y: int, max_x: int, max_y: int) -> void:
+		rect_calls.append(Rect2i(Vector2i(min_x, min_y), Vector2i(max_x - min_x + 1, max_y - min_y + 1)))
 
 
 func before_each() -> void:
@@ -142,6 +150,23 @@ func test_fullscreen_map_view_change_does_not_sync_world_chunks() -> void:
 	main._on_map_overlay_view_changed()
 
 	assert_eq(streaming.sync_calls, 0)
+
+
+func test_world_streaming_generates_matching_sim_chunks_for_building_placement() -> void:
+	var main = autofree(MainScript.new())
+	var streaming := FakeWorldStreamingController.new()
+	streaming.result = Rect2i(Vector2i(-1, 2), Vector2i(2, 1))
+	var sim := FakeGeneratedRectSim.new()
+	main.world_streaming_controller = streaming
+	main.sim = sim
+	main.chunk_size = 32
+	main.player = add_child_autoqfree(PlayerController.new()) as PlayerController
+
+	main._sync_world_around_camera(true)
+
+	assert_eq(sim.rect_calls, [
+		Rect2i(Vector2i(-32, 64), Vector2i(64, 32)),
+	])
 
 
 func test_visible_chunk_math_uses_floor_chunks_for_negative_tiles() -> void:
@@ -337,6 +362,23 @@ func test_environment_chunk_render_task_signature_changes_with_tile_content() ->
 	]
 	var changed_tiles := [
 		{"x": 0, "y": 0, "terrain": "stone", "resource": "", "amount": 0, "render": true},
+	]
+
+	var first_task = environment._chunk_render_task(Vector2i.ZERO, first_tiles, 1)
+	first_task.run()
+	var changed_task = environment._chunk_render_task(Vector2i.ZERO, changed_tiles, 1)
+	changed_task.run()
+
+	assert_ne(first_task.result()["tile_signature"], changed_task.result()["tile_signature"])
+
+
+func test_environment_chunk_render_task_signature_changes_with_surface_z() -> void:
+	var environment = autofree(EnvironmentScript.new())
+	var first_tiles := [
+		{"x": 0, "y": 0, "terrain": "ground", "resource": "", "amount": 0, "surface_z": 0, "render": true},
+	]
+	var changed_tiles := [
+		{"x": 0, "y": 0, "terrain": "ground", "resource": "", "amount": 0, "surface_z": 2, "render": true},
 	]
 
 	var first_task = environment._chunk_render_task(Vector2i.ZERO, first_tiles, 1)
@@ -647,6 +689,19 @@ func test_environment_terrain_render_data_splits_large_chunks_into_mesh_batches(
 	assert_gt(render_data["batches"][1]["vertices"].size(), 0)
 
 
+func test_environment_terrain_render_data_offsets_vertices_by_surface_z() -> void:
+	var environment = autofree(EnvironmentScript.new())
+	var tiles := [
+		{"x": 0, "y": 0, "terrain": "ground", "resource": "", "surface_z": 2, "render": true},
+	]
+
+	var render_data: Dictionary = environment._terrain_chunk_render_data(tiles)
+	var vertices: PackedVector3Array = render_data["batches"][0]["vertices"]
+
+	assert_gt(vertices.size(), 0)
+	assert_almost_eq(vertices[0].y, environment.TERRAIN_Y + 2.0 * environment.SURFACE_LEVEL_HEIGHT, 0.001)
+
+
 func test_environment_resource_render_data_splits_large_deposits_into_instance_batches() -> void:
 	var environment = autofree(EnvironmentScript.new())
 	var tiles := []
@@ -666,6 +721,19 @@ func test_environment_resource_render_data_splits_large_deposits_into_instance_b
 	assert_eq(render_data["batches"].size(), 2)
 	assert_eq(render_data["batches"][0]["positions"].size(), environment.RESOURCE_RENDER_BATCH_SIZE_INSTANCES)
 	assert_eq(render_data["batches"][1]["positions"].size(), 1)
+
+
+func test_environment_resource_render_data_offsets_instances_by_surface_z() -> void:
+	var environment = autofree(EnvironmentScript.new())
+	var tiles := [
+		{"x": 0, "y": 0, "terrain": "ground", "resource": "tin_ore", "amount": 1, "surface_z": 3, "render": true},
+	]
+
+	var render_data: Dictionary = environment._resource_chunk_render_data(tiles)
+	var positions: Array = render_data["batches"][0]["positions"]
+
+	assert_eq(positions.size(), 1)
+	assert_almost_eq(positions[0].y, environment.RESOURCE_Y + 3.0 * environment.SURFACE_LEVEL_HEIGHT, 0.001)
 
 
 func test_environment_chunk_render_task_prepares_render_data_without_environment_callable() -> void:

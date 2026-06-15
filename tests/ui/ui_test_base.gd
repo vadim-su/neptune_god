@@ -285,6 +285,40 @@ class FakeInventorySim:
 		return action != "reject"
 
 
+class FakeSimulationClockSim:
+	extends RefCounted
+
+	var tick_many_calls: Array[int] = []
+	var tick := 0
+	var digest_value := 0
+	var map_tiles := 0
+	var resources := 0
+	var time_of_day := 0.5
+	var solar_factor_value := 1.0
+
+	func tick_many(count: int) -> void:
+		tick_many_calls.append(count)
+		tick += count
+
+	func core_tick() -> int:
+		return tick
+
+	func digest() -> int:
+		return digest_value
+
+	func map_tile_count() -> int:
+		return map_tiles
+
+	func resource_count() -> int:
+		return resources
+
+	func time_of_day_normalized() -> float:
+		return time_of_day
+
+	func solar_factor() -> float:
+		return solar_factor_value
+
+
 func before_each() -> void:
 	ItemCatalogScript.load_from_rows([
 		{"id": "iron_ore", "display_name": "Iron ore", "color": "#94785C"},

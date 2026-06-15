@@ -744,6 +744,74 @@ func test_map_overlay_zoom_and_pan_reuse_chunk_textures_until_snapshot_changes()
 	assert_gt(overlay.pending_map_texture_job_count_for_tests(), 0)
 
 
+func test_fullscreen_map_zoom_reuses_prepared_chart_cache_while_bounds_stay_covered() -> void:
+	var overlay = add_child_autoqfree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	overlay.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	overlay.size = Vector2(160.0, 160.0)
+	overlay.set_fullscreen_open(true)
+	overlay.set_pixels_per_tile(4.0)
+	var chunk_bounds := Rect2i(Vector2i(-128, -128), Vector2i(256, 256))
+	var image := Image.create(chunk_bounds.size.x, chunk_bounds.size.y, false, Image.FORMAT_RGBA8)
+	image.fill(Color(0.20, 0.30, 0.20, 1.0))
+	overlay._map_chunk_entries = {
+		"0:0": {
+			"bounds": chunk_bounds,
+			"snapshot_key": "stable",
+			"texture": ImageTexture.create_from_image(image),
+		},
+	}
+	overlay._target_map_chunk_keys = {"0:0": true}
+	overlay._map_chunk_entries_revision += 1
+	overlay._current_visible_rect = Rect2i(Vector2i(-24, -24), Vector2i(48, 48))
+
+	var first_bounds: Rect2i = overlay.current_tile_bounds()
+	assert_true(overlay.ensure_fullscreen_chart_cache_for_tests(first_bounds))
+	var first_texture: Texture2D = overlay.fullscreen_chart_cache_texture_for_tests()
+	assert_not_null(first_texture)
+	assert_eq(overlay.fullscreen_chart_cache_build_count_for_tests(), 1)
+
+	overlay.zoom_by(1.25)
+	var zoomed_bounds: Rect2i = overlay.current_tile_bounds()
+	assert_true(overlay.ensure_fullscreen_chart_cache_for_tests(zoomed_bounds))
+
+	assert_same(first_texture, overlay.fullscreen_chart_cache_texture_for_tests())
+	assert_eq(overlay.fullscreen_chart_cache_build_count_for_tests(), 1)
+
+
+func test_fullscreen_map_zoom_suspends_hover_lookup_until_pointer_settles() -> void:
+	var overlay = autofree(MapOverlayScript.new())
+	overlay.configure_fullscreen()
+	overlay.set_fullscreen_open(true)
+	overlay._current_visible_rect = Rect2i(Vector2i.ZERO, Vector2i(8, 8))
+	overlay._map_chunk_entries = {
+		"0:0": {
+			"bounds": Rect2i(Vector2i.ZERO, Vector2i(8, 8)),
+			"tiles": [
+				{"x": 1, "y": 1, "terrain": "ground", "resource": "iron_ore", "amount": 10, "render": true},
+			],
+		},
+	}
+	overlay._target_map_chunk_keys = {"0:0": true}
+	overlay._map_chunk_entries_revision += 1
+
+	var first_vein: Dictionary = overlay.hovered_resource_vein_for_tests(Vector2i(1, 1))
+	assert_eq(int(first_vein["amount"]), 10)
+	assert_eq(overlay.visible_resource_lookup_cache_rebuild_count_for_tests(), 1)
+
+	overlay.zoom_by(1.25)
+	var suspended_vein: Dictionary = overlay.hovered_resource_vein_for_tests(Vector2i(1, 1))
+
+	assert_true(overlay.resource_hover_suspended_for_tests())
+	assert_true(suspended_vein.is_empty())
+	assert_eq(overlay.visible_resource_lookup_cache_rebuild_count_for_tests(), 1)
+
+	overlay.refresh_resource_selection()
+	var settled_vein: Dictionary = overlay.hovered_resource_vein_for_tests(Vector2i(1, 1))
+
+	assert_eq(int(settled_vein["amount"]), 10)
+
+
 func test_map_overlay_chunk_texture_rebuilds_when_tile_content_changes_without_size_change() -> void:
 	var overlay = add_child_autoqfree(MapOverlayScript.new())
 	overlay.configure_fullscreen()
@@ -941,5 +1009,3 @@ func test_map_overlay_repeated_matching_chunk_snapshot_does_not_request_redraw()
 	overlay.set_chunk_snapshot(chunks, bounds, [], Vector3.ZERO, bounds, false, "", "stable-snapshot")
 
 	assert_eq(overlay.redraw_request_count_for_tests(), redraw_count)
-
-

@@ -30,7 +30,8 @@ use crate::diff::SimDiff;
 use crate::digest::WorldDigest;
 use crate::energy::{EnergyNetwork, EnergyView, SuppliedRatio};
 use crate::ids::{
-    BuildingId, GroupId, IdAllocator, InventoryId, ItemInstanceId, ItemKindId, LineId, TilePos,
+    BuildingId, DEFAULT_SURFACE_Z, GroupId, IdAllocator, InventoryId, ItemInstanceId, ItemKindId,
+    LineId, SurfaceZ, TilePos,
 };
 use crate::inserter::{
     CandidateRoleOrder, InserterCandidate, InserterCandidateKind, carried_stack,
@@ -228,6 +229,7 @@ pub struct SimWorld {
     player_inventory: SimInventory,
     cursor_inventory: SimInventory,
     terrain: BTreeMap<TilePos, String>,
+    surface_z: BTreeMap<TilePos, SurfaceZ>,
     buildings: BTreeMap<BuildingId, SimBuilding>,
     building_by_origin: BTreeMap<TilePos, BuildingId>,
     building_occupancy: BTreeMap<TilePos, BuildingId>,
@@ -498,6 +500,7 @@ impl SimWorld {
             day_night_settings: DayNightSettings::default(),
             ids: IdAllocator::default(),
             terrain: BTreeMap::new(),
+            surface_z: BTreeMap::new(),
             buildings: BTreeMap::new(),
             building_by_origin: BTreeMap::new(),
             building_occupancy: BTreeMap::new(),
@@ -1060,6 +1063,21 @@ impl SimWorld {
             .unwrap_or_else(|| self.catalog.default_terrain())
     }
 
+    pub fn surface_z_at(&self, pos: TilePos) -> SurfaceZ {
+        self.surface_z
+            .get(&pos)
+            .copied()
+            .unwrap_or(DEFAULT_SURFACE_Z)
+    }
+
+    pub fn set_surface_z(&mut self, pos: TilePos, surface_z: SurfaceZ) {
+        if surface_z == DEFAULT_SURFACE_Z {
+            self.surface_z.remove(&pos);
+        } else {
+            self.surface_z.insert(pos, surface_z);
+        }
+    }
+
     pub fn set_terrain(
         &mut self,
         pos: TilePos,
@@ -1094,6 +1112,9 @@ impl SimWorld {
                 .iter()
                 .map(|tile| (tile.pos, tile.terrain_id.clone())),
         )?;
+        for tile in &generated.terrain_tiles {
+            self.set_surface_z(tile.pos, tile.surface_z);
+        }
         for resource in &generated.resource_tiles {
             let Some(kind) = self.catalog.item_id_by_def_id(&resource.item_def_id) else {
                 return Err(format!("unknown resource item '{}'", resource.item_def_id));
@@ -1155,6 +1176,7 @@ impl SimWorld {
         for &pos in &footprint {
             self.ensure_buildable(pos)?;
         }
+        self.ensure_flat_footprint(origin, &footprint)?;
         for &pos in &footprint {
             if self.building_occupancy.contains_key(&pos) || self.occupied_tiles.contains_key(&pos)
             {
@@ -1207,6 +1229,7 @@ impl SimWorld {
             && self.building_occupancy.is_empty()
             && self.inventories.is_empty()
             && self.terrain.is_empty()
+            && self.surface_z.is_empty()
             && self.occupied_tiles.is_empty()
             && self.loaded_containers.is_empty()
             && self.character_inventory == SimCharacterInventory::from_catalog(&self.catalog)
@@ -1222,6 +1245,7 @@ impl SimWorld {
                 def_id: building.def_id.clone(),
                 kind: building.kind,
                 origin: building.origin,
+                surface_z: building.surface_z,
                 direction: building.direction,
                 state: building.state.clone(),
                 inventories: building
@@ -2058,6 +2082,29 @@ impl SimWorld {
         }
     }
 
+    fn ensure_flat_footprint(
+        &self,
+        origin: TilePos,
+        footprint: &[TilePos],
+    ) -> Result<(), SimCommandError> {
+        let Some(first) = footprint.first().copied() else {
+            return Ok(());
+        };
+        let expected_z = self.surface_z_at(first);
+        for &pos in footprint {
+            let found_z = self.surface_z_at(pos);
+            if found_z != expected_z {
+                return Err(SimCommandError::UnevenTerrain {
+                    origin,
+                    pos,
+                    expected_z,
+                    found_z,
+                });
+            }
+        }
+        Ok(())
+    }
+
     pub fn set_occupied_surface_tiles(&mut self, tiles: impl IntoIterator<Item = TilePos>) {
         self.occupied_surface_tiles = tiles.into_iter().collect();
         self.occupied_surface_tiles
@@ -2410,7 +2457,10 @@ impl SimWorld {
         }
         for pos in positions {
             self.occupied_tiles.insert(pos, speed);
-            self.topology_graph.set_belt(pos, BeltTile::new(direction));
+            self.topology_graph.set_belt(
+                pos,
+                BeltTile::new(direction).on_surface(self.surface_z_at(pos)),
+            );
         }
         self.rebuild_transport_lines();
         Ok(())
@@ -2436,6 +2486,7 @@ impl SimWorld {
         for &pos in &footprint {
             self.ensure_buildable(pos)?;
         }
+        self.ensure_flat_footprint(origin, &footprint)?;
         for &pos in &footprint {
             if self.building_occupancy.contains_key(&pos) || self.occupied_tiles.contains_key(&pos)
             {
@@ -2461,7 +2512,8 @@ impl SimWorld {
             | CoreBuildingDriver::Inserter { .. }
             | CoreBuildingDriver::BehaviorHost => {}
         }
-        let ports = building_ports(origin, &footprint, direction, &def);
+        let surface_z = self.surface_z_at(origin);
+        let ports = building_ports(origin, &footprint, direction, surface_z, &def);
 
         let state = initial_state(
             kind,
@@ -2502,6 +2554,7 @@ impl SimWorld {
                 def_id,
                 kind,
                 origin,
+                surface_z,
                 direction,
                 footprint,
                 ports,
@@ -2532,8 +2585,10 @@ impl SimWorld {
             return Err(SimCommandError::OccupiedTile { pos });
         }
         self.occupied_tiles.insert(pos, speed);
-        self.topology_graph
-            .set_belt(pos, BeltTile::turn(input_direction, direction));
+        self.topology_graph.set_belt(
+            pos,
+            BeltTile::turn(input_direction, direction).on_surface(self.surface_z_at(pos)),
+        );
         self.rebuild_transport_lines();
         Ok(())
     }

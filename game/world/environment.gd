@@ -7,6 +7,7 @@ signal chunks_changed
 const TILE_SIZE := 1.0
 const TERRAIN_Y := 0.0
 const RESOURCE_Y := 0.035
+const SURFACE_LEVEL_HEIGHT := 1.0
 
 const TERRAIN_COLORS := {
 	"ground": Color(0.18, 0.26, 0.18),
@@ -48,6 +49,7 @@ class WorldChunkRenderTask:
 
 	const TASK_TERRAIN_Y := 0.0
 	const TASK_RESOURCE_Y := 0.035
+	const TASK_SURFACE_LEVEL_HEIGHT := 1.0
 	const TASK_TERRAIN_RENDER_BATCH_SIZE_TILES := 16
 	const TASK_RESOURCE_RENDER_BATCH_SIZE_INSTANCES := 128
 
@@ -126,7 +128,7 @@ class WorldChunkRenderTask:
 				uvs,
 				colors,
 				indices,
-				Vector2i(tile["x"], tile["y"]),
+				tile,
 				terrain_by_pos
 			)
 
@@ -144,9 +146,11 @@ class WorldChunkRenderTask:
 		uvs: PackedVector2Array,
 		colors: PackedColorArray,
 		indices: PackedInt32Array,
-		pos: Vector2i,
+		tile: Dictionary,
 		terrain_by_pos: Dictionary
 	) -> void:
+		var pos := Vector2i(tile["x"], tile["y"])
+		var world_y := surface_y_for_tile(tile, TASK_TERRAIN_Y)
 		var base_index := vertices.size()
 		var offsets := [-0.5, 0.0, 0.5]
 
@@ -154,7 +158,7 @@ class WorldChunkRenderTask:
 			for x_offset: float in offsets:
 				var world_x := float(pos.x) + x_offset
 				var world_z := float(pos.y) + z_offset
-				vertices.append(Vector3(world_x, TASK_TERRAIN_Y, world_z))
+				vertices.append(Vector3(world_x, world_y, world_z))
 				normals.append(Vector3.UP)
 				uvs.append(Vector2(world_x + 0.5, world_z + 0.5))
 				colors.append(terrain_blend_weight(pos, x_offset, z_offset, terrain_by_pos))
@@ -214,7 +218,11 @@ class WorldChunkRenderTask:
 				continue
 			if not positions_by_resource.has(resource_id):
 				positions_by_resource[resource_id] = []
-			positions_by_resource[resource_id].append(Vector3(float(tile["x"]), TASK_RESOURCE_Y, float(tile["y"])))
+			positions_by_resource[resource_id].append(Vector3(
+				float(tile["x"]),
+				surface_y_for_tile(tile, TASK_RESOURCE_Y),
+				float(tile["y"])
+			))
 		var resource_ids: Array = positions_by_resource.keys()
 		resource_ids.sort()
 		var batches: Array[Dictionary] = []
@@ -246,9 +254,13 @@ class WorldChunkRenderTask:
 				str(tile.get("terrain", "")),
 				str(tile.get("resource", "")),
 				int(tile.get("amount", 0)),
+				int(tile.get("surface_z", 0)),
 				bool(tile.get("render", true)),
 			])
 		return str(hash_value)
+
+	static func surface_y_for_tile(tile: Dictionary, base_y: float) -> float:
+		return base_y + float(int(tile.get("surface_z", 0))) * TASK_SURFACE_LEVEL_HEIGHT
 
 	static func tile_bounds(source_tiles: Array) -> Rect2i:
 		var bounds_initialized := false
@@ -976,13 +988,14 @@ func _add_blended_tile_geometry(
 	pos: Vector2i,
 	terrain_by_pos: Dictionary
 ) -> void:
+	var tile := {"x": pos.x, "y": pos.y, "surface_z": 0}
 	WorldChunkRenderTask.add_blended_tile_geometry(
 		vertices,
 		normals,
 		uvs,
 		colors,
 		indices,
-		pos,
+		tile,
 		terrain_by_pos
 	)
 

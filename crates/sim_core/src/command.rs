@@ -3,7 +3,7 @@
 use behavior_api::{BehaviorCommand, BehaviorHostError};
 
 use crate::catalog::{CoreInventoryRole, CoreItemStack};
-use crate::ids::{BuildingId, ItemKindId, TilePos};
+use crate::ids::{BuildingId, ItemKindId, SurfaceZ, TilePos};
 use crate::tick::{BehaviorEffectRejectionReason, BehaviorHostFailurePhase};
 use crate::topology::graph::Direction;
 use crate::units::UnitsPerTick;
@@ -92,6 +92,12 @@ pub enum SimCommandError {
     },
     UnbuildableTile {
         pos: TilePos,
+    },
+    UnevenTerrain {
+        origin: TilePos,
+        pos: TilePos,
+        expected_z: SurfaceZ,
+        found_z: SurfaceZ,
     },
     MissingBuilding {
         pos: TilePos,

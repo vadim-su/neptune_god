@@ -23,9 +23,20 @@ const HOTBAR_SELECTOR_OWNER_PREFIX := "hotbar:"
 @onready var buildings_root: Node3D = %Buildings
 @onready var status_label: Label = %StatusLabel
 @onready var fps_counter: Control = %FpsCounter
+@onready var simulation_speed_label: Label = %SimulationSpeedLabel
+@onready var simulation_speed_down_button: Button = %SimulationSpeedDownButton
+@onready var simulation_speed_up_button: Button = %SimulationSpeedUpButton
 @onready var hotbar = %Hotbar
 @onready var environment: Node3D = $Environment
+@onready var sun: DirectionalLight3D = $Sun
+@onready var sky_fill: DirectionalLight3D = $SkyFill
+@onready var world_environment: WorldEnvironment = $WorldEnvironment
 
+const DEFAULT_SIMULATION_TICKS_PER_SECOND := 60
+const SIMULATION_TICKS_PER_SECOND_STEP := 15
+const MIN_SIMULATION_TICKS_PER_SECOND := 0
+const MAX_SIMULATION_TICKS_PER_SECOND := 240
+const MAX_SIMULATION_TICKS_PER_FRAME := 300
 const CAMERA_MIN_DISTANCE := 10.0
 const CAMERA_MAX_DISTANCE := 96.0
 const CAMERA_TARGET_HEIGHT := 0.75
@@ -36,13 +47,22 @@ const CAMERA_MIN_ELEVATION := deg_to_rad(30.0)
 const CAMERA_MAX_ELEVATION := deg_to_rad(76.0)
 const CAMERA_FAR_PADDING := 32.0
 const PLAYER_COLLISION_RADIUS := 0.32
+const SUN_ORBIT_RADIUS := 48.0
+const SUNRISE_TINT := Color(1.0, 0.58, 0.32, 1.0)
+const MIDDAY_TINT := Color(1.0, 0.86, 0.62, 1.0)
+const NIGHT_AMBIENT_COLOR := Color(0.16, 0.22, 0.30, 1.0)
+const DAY_AMBIENT_COLOR := Color(0.58, 0.66, 0.60, 1.0)
+const NIGHT_FOG_COLOR := Color(0.20, 0.27, 0.31, 1.0)
+const DAY_FOG_COLOR := Color(0.52, 0.62, 0.56, 1.0)
 
 enum BuildMode { NEUTRAL, BUILD }
 
-var sim: NeptuneSim
+var sim: Variant
 var chunk_tile_provider: NeptuneChunkTileProvider
 var camera_controller: RefCounted
 var world_streaming_controller: RefCounted
+var simulation_ticks_per_second := DEFAULT_SIMULATION_TICKS_PER_SECOND
+var simulation_tick_accumulator := 0.0
 var build_mode := BuildMode.NEUTRAL
 var selected_building_id := ""
 var selected_object_id := -1
@@ -104,6 +124,7 @@ func _ready() -> void:
 	)
 	if environment.has_signal("chunks_changed"):
 		environment.chunks_changed.connect(_on_environment_chunks_changed)
+	_setup_simulation_speed_controls()
 	player.can_move_to = Callable(self, "_is_player_position_walkable")
 	_update_camera()
 	_sync_world_around_camera(true)
@@ -148,6 +169,7 @@ func _ready() -> void:
 	catalog_selector.closed.connect(_on_catalog_selector_closed)
 	sim.tick_many(3)
 	_update_status_label()
+	_update_celestial_lighting()
 	_update_camera()
 	_update_map_overlays()
 	initialized = true
@@ -172,6 +194,7 @@ func _process(delta: float) -> void:
 		return
 
 	player.input_blocked = _ui_blocks_gameplay_input()
+	_advance_simulation(delta)
 	if inventory_controller != null and inventory_controller.is_open():
 		inventory_controller.update()
 	_update_camera()
@@ -179,6 +202,104 @@ func _process(delta: float) -> void:
 	_update_build_preview()
 	if map_overlay_controller != null:
 		map_overlay_controller.process(delta)
+
+
+func _setup_simulation_speed_controls() -> void:
+	if simulation_speed_down_button != null and not simulation_speed_down_button.pressed.is_connected(_decrease_simulation_speed):
+		simulation_speed_down_button.pressed.connect(_decrease_simulation_speed)
+	if simulation_speed_up_button != null and not simulation_speed_up_button.pressed.is_connected(_increase_simulation_speed):
+		simulation_speed_up_button.pressed.connect(_increase_simulation_speed)
+	_update_simulation_speed_label()
+
+
+func _advance_simulation(delta: float) -> void:
+	if sim == null or not sim.has_method("tick_many"):
+		return
+	if simulation_ticks_per_second <= 0:
+		simulation_tick_accumulator = 0.0
+		return
+
+	simulation_tick_accumulator += maxf(delta, 0.0)
+	var ticks_to_run := int(floor(simulation_tick_accumulator * float(simulation_ticks_per_second)))
+	if ticks_to_run <= 0:
+		return
+	ticks_to_run = mini(ticks_to_run, MAX_SIMULATION_TICKS_PER_FRAME)
+	simulation_tick_accumulator -= float(ticks_to_run) / float(simulation_ticks_per_second)
+
+	sim.tick_many(ticks_to_run)
+	_update_celestial_lighting()
+	_render_buildings_from_sim()
+	_update_status_label()
+	_mark_map_snapshot_dirty()
+
+
+func _update_celestial_lighting() -> void:
+	if sim == null:
+		return
+	if not sim.has_method("time_of_day_normalized") or not sim.has_method("solar_factor"):
+		return
+
+	_apply_celestial_lighting(
+		clampf(float(sim.time_of_day_normalized()), 0.0, 1.0),
+		clampf(float(sim.solar_factor()), 0.0, 1.0)
+	)
+
+
+func _apply_celestial_lighting(time_of_day: float, solar_factor: float) -> void:
+	var source_direction := _sun_source_direction_for_time(time_of_day)
+	if sun != null:
+		sun.look_at_from_position(source_direction * SUN_ORBIT_RADIUS, Vector3.ZERO, Vector3.UP)
+		sun.light_energy = lerpf(0.03, 2.45, solar_factor)
+		sun.light_indirect_energy = lerpf(0.05, 1.35, solar_factor)
+		sun.light_color = _sun_color_for_solar_factor(solar_factor)
+
+	if sky_fill != null:
+		sky_fill.light_energy = lerpf(0.08, 0.22, solar_factor)
+
+	if world_environment == null or world_environment.environment == null:
+		return
+	var render_environment := world_environment.environment
+	render_environment.ambient_light_color = NIGHT_AMBIENT_COLOR.lerp(DAY_AMBIENT_COLOR, solar_factor)
+	render_environment.ambient_light_energy = lerpf(0.10, 0.38, solar_factor)
+	render_environment.fog_light_color = NIGHT_FOG_COLOR.lerp(DAY_FOG_COLOR, solar_factor)
+	render_environment.fog_light_energy = lerpf(0.06, 0.24, solar_factor)
+	render_environment.fog_sun_scatter = lerpf(0.02, 0.08, solar_factor)
+
+
+func _sun_source_direction_for_time(time_of_day: float) -> Vector3:
+	var phase := fposmod(time_of_day, 1.0)
+	var orbit_angle := TAU * (phase - 0.25)
+	return Vector3(cos(orbit_angle), sin(orbit_angle), 0.35).normalized()
+
+
+func _sun_color_for_solar_factor(solar_factor: float) -> Color:
+	var warm_edge := 1.0 - absf((solar_factor * 2.0) - 1.0)
+	var edge_tint := SUNRISE_TINT.lerp(MIDDAY_TINT, solar_factor)
+	return MIDDAY_TINT.lerp(edge_tint, warm_edge)
+
+
+func _decrease_simulation_speed() -> void:
+	_set_simulation_ticks_per_second(simulation_ticks_per_second - SIMULATION_TICKS_PER_SECOND_STEP)
+
+
+func _increase_simulation_speed() -> void:
+	_set_simulation_ticks_per_second(simulation_ticks_per_second + SIMULATION_TICKS_PER_SECOND_STEP)
+
+
+func _set_simulation_ticks_per_second(value: int) -> void:
+	simulation_ticks_per_second = clampi(
+		value,
+		MIN_SIMULATION_TICKS_PER_SECOND,
+		MAX_SIMULATION_TICKS_PER_SECOND
+	)
+	simulation_tick_accumulator = 0.0
+	_update_simulation_speed_label()
+
+
+func _update_simulation_speed_label() -> void:
+	if simulation_speed_label == null:
+		return
+	simulation_speed_label.text = "TPS: %d" % simulation_ticks_per_second
 
 
 func _physics_process(_delta: float) -> void:
@@ -324,11 +445,23 @@ func _update_3d_rendering_gate() -> void:
 func _sync_world_around_camera(force: bool) -> void:
 	if world_streaming_controller == null:
 		return
-	var changed: bool = world_streaming_controller.sync_around_position(_streaming_center_position(player.global_position), force)
-	if not changed:
+	var sync_result: Variant = world_streaming_controller.sync_around_position(_streaming_center_position(player.global_position), force)
+	if sync_result is bool and not sync_result:
 		return
+	if sync_result is Rect2i:
+		_ensure_sim_generated_for_chunk_rect(sync_result)
 	_mark_map_snapshot_dirty()
 	_update_status_label()
+
+
+func _ensure_sim_generated_for_chunk_rect(chunk_rect: Rect2i) -> void:
+	if sim == null or not sim.has_method("ensure_generated_rect"):
+		return
+	var min_chunk := chunk_rect.position
+	var max_chunk := chunk_rect.position + chunk_rect.size - Vector2i.ONE
+	var min_tile := min_chunk * chunk_size
+	var max_tile := (max_chunk + Vector2i.ONE) * chunk_size - Vector2i.ONE
+	sim.ensure_generated_rect(min_tile.x, min_tile.y, max_tile.x, max_tile.y)
 
 
 func _create_map_overlays() -> void:
@@ -531,6 +664,8 @@ func _building_selector_entries() -> Array:
 
 
 func _update_status_label() -> void:
+	if status_label == null or sim == null:
+		return
 	var object_text := "none"
 	if not selected_object.is_empty():
 		object_text = "%s #%d" % [str(selected_object["def_id"]), selected_object_id]
@@ -665,6 +800,8 @@ func _mouse_ground_tile() -> Variant:
 
 
 func _render_buildings_from_sim() -> void:
+	if sim == null or buildings_root == null or not sim.has_method("buildings"):
+		return
 	BuildingRendererScript.render_from_sim(sim, buildings_root, building_tile_index, blocked_building_tiles)
 	if map_overlay_controller != null:
 		map_overlay_controller.mark_buildings_dirty()

@@ -14,7 +14,8 @@ use crate::catalog::{CoreBuildingBehavior, CoreBuildingDef, CoreBuildingDriver, 
 use crate::character_inventory::{LoadedContainerInstance, SimCharacterInventory};
 use crate::energy::EnergyNetworkSnapshot;
 use crate::ids::{
-    BuildingId, IdAllocator, IdAllocatorSnapshot, InventoryId, ItemInstanceId, ItemKindId, TilePos,
+    BuildingId, DEFAULT_SURFACE_Z, IdAllocator, IdAllocatorSnapshot, InventoryId, ItemInstanceId,
+    ItemKindId, SurfaceZ, TilePos,
 };
 use crate::inventory::SimInventory;
 use crate::tick::{BehaviorEffectRejectionReason, CoreRemovalDrop, CoreSurfaceDrop, SimTick};
@@ -55,6 +56,8 @@ pub struct SimWorldSnapshot {
     pub day_night_settings: DayNightSettings,
     pub ids: IdAllocatorSnapshot,
     pub terrain: BTreeMap<TilePos, String>,
+    #[serde(default)]
+    pub surface_z: BTreeMap<TilePos, SurfaceZ>,
     pub resources: BTreeMap<TilePos, (ItemKindId, u32)>,
     pub occupied_tiles: BTreeMap<TilePos, UnitsPerTick>,
     pub topology_graph: TopologyGraphSnapshot,
@@ -125,6 +128,7 @@ impl SimWorld {
             day_night_settings: self.day_night_settings,
             ids: self.ids.snapshot(),
             terrain: self.terrain.clone(),
+            surface_z: self.surface_z.clone(),
             resources: self.resources.clone(),
             occupied_tiles: self.occupied_tiles.clone(),
             topology_graph: self.topology_graph.snapshot(),
@@ -174,6 +178,11 @@ impl SimWorld {
             .with_day_length(world.day_night_settings.day_length_ticks);
         world.ids = IdAllocator::from_snapshot(snapshot.ids);
         world.terrain = snapshot.terrain;
+        world.surface_z = snapshot
+            .surface_z
+            .into_iter()
+            .filter(|(_, surface_z)| *surface_z != DEFAULT_SURFACE_Z)
+            .collect();
         world.resources = snapshot.resources;
         world.occupied_tiles = snapshot.occupied_tiles;
         world.topology_graph = TopologyGraph::from_snapshot(snapshot.topology_graph);
@@ -627,6 +636,7 @@ fn validate_building_against_def(
         building.origin,
         &expected_footprint,
         building.direction,
+        building.surface_z,
         def,
     );
     if building.ports != expected_ports {

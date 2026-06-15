@@ -52,8 +52,10 @@ impl SimWorld {
             .belts_sorted()
             .filter_map(|(pos, belt)| {
                 let input_direction = self.connected_belt_input_direction(pos, belt.direction);
-                (input_direction != belt.input_direction)
-                    .then_some((pos, BeltTile::turn(input_direction, belt.direction)))
+                (input_direction != belt.input_direction).then_some((
+                    pos,
+                    BeltTile::turn(input_direction, belt.direction).on_surface(belt.surface_z),
+                ))
             })
             .collect::<Vec<_>>();
         let changed = !updates.is_empty();
@@ -68,10 +70,15 @@ impl SimWorld {
         pos: TilePos,
         output: Direction,
     ) -> Direction {
+        let target_z = self
+            .topology_graph
+            .belt(pos)
+            .map(|belt| belt.surface_z)
+            .unwrap_or_else(|| self.surface_z_at(pos));
         let mut side_input = None;
         for input_direction in [output, output.left(), output.right()] {
             let input_pos = input_direction.opposite().output_pos(pos);
-            if self.transport_source_outputs_to(input_pos, pos, input_direction) {
+            if self.transport_source_outputs_to(input_pos, pos, input_direction, target_z) {
                 if input_direction == output {
                     return output;
                 }
@@ -90,11 +97,12 @@ impl SimWorld {
         source_pos: TilePos,
         target_pos: TilePos,
         direction: Direction,
+        target_z: SurfaceZ,
     ) -> bool {
         if self
             .topology_graph
             .belt(source_pos)
-            .is_some_and(|belt| belt.direction == direction)
+            .is_some_and(|belt| belt.direction == direction && belt.surface_z == target_z)
         {
             return true;
         }
@@ -106,6 +114,9 @@ impl SimWorld {
             return false;
         };
         if building.direction != direction || direction.output_pos(source_pos) != target_pos {
+            return false;
+        }
+        if building.surface_z != target_z {
             return false;
         }
         self.catalog
@@ -657,6 +668,7 @@ impl SimWorld {
             if let Some(target) = line_by_first_tile(records, front_output)
                 && !target.closed
                 && let Some(target_belt) = self.topology_graph.belt(front_output)
+                && self.belt_surfaces_match(source_sort_tile, front_output)
                 && source_side == Some(target_belt.input_direction.opposite())
             {
                 let kind = BeltInteractionKind::EndTransfer;
@@ -680,6 +692,9 @@ impl SimWorld {
                 let Some(target_belt) = self.topology_graph.belt(front_output) else {
                     continue;
                 };
+                if !self.belt_surfaces_match(source_sort_tile, front_output) {
+                    continue;
+                }
                 let Some(source_side) = source_side else {
                     continue;
                 };
@@ -768,6 +783,16 @@ impl SimWorld {
                 TransportNodeKind::BlockedFront => {}
             }
         }
+    }
+
+    fn belt_surfaces_match(&self, source: TilePos, target: TilePos) -> bool {
+        let Some(source_belt) = self.topology_graph.belt(source) else {
+            return false;
+        };
+        let Some(target_belt) = self.topology_graph.belt(target) else {
+            return false;
+        };
+        source_belt.surface_z == target_belt.surface_z
     }
 
     pub(super) fn process_underground_node(

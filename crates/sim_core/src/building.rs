@@ -5,7 +5,7 @@ use crate::catalog::{
     CoreBuildingBehavior, CoreBuildingDriver, CoreBuildingKind, CoreItemStack, CorePortRole,
 };
 
-use crate::ids::{BuildingId, InventoryId, ItemKindId, TilePos};
+use crate::ids::{BuildingId, DEFAULT_SURFACE_Z, InventoryId, ItemKindId, SurfaceZ, TilePos};
 use crate::inventory::{SimInventory, SimInventorySnapshot};
 use crate::topology::graph::Direction;
 use crate::transport::node::SplitterRuntime;
@@ -22,6 +22,8 @@ pub struct SimBuilding {
     pub origin: TilePos,
     #[serde(with = "serde_direction")]
     pub direction: Direction,
+    #[serde(default = "default_surface_z")]
+    pub surface_z: SurfaceZ,
     pub footprint: Vec<TilePos>,
     pub ports: Vec<SimBuildingPort>,
     pub inventories: Vec<InventoryId>,
@@ -33,6 +35,8 @@ pub struct SimBuildingPort {
     #[serde(with = "serde_core_port_role")]
     pub role: CorePortRole,
     pub tile: TilePos,
+    #[serde(default = "default_surface_z")]
+    pub surface_z: SurfaceZ,
     pub accepts: Vec<ItemKindId>,
 }
 
@@ -93,9 +97,14 @@ pub struct SimBuildingSnapshot {
     pub def_id: String,
     pub kind: CoreBuildingKind,
     pub origin: TilePos,
+    pub surface_z: SurfaceZ,
     pub direction: Direction,
     pub state: SimBuildingState,
     pub inventories: Vec<SimInventorySnapshot>,
+}
+
+fn default_surface_z() -> SurfaceZ {
+    DEFAULT_SURFACE_Z
 }
 
 pub fn footprint_tiles(origin: TilePos, offsets: &[(i32, i32)]) -> Vec<TilePos> {

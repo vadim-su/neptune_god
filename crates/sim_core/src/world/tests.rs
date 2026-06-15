@@ -1491,6 +1491,308 @@ fn buildable_default_terrain_keeps_existing_placement_behavior() {
 }
 
 #[test]
+fn surface_z_defaults_to_zero_and_can_be_reset_to_default() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    let pos = TilePos::new(3, -2);
+
+    assert_eq!(world.surface_z_at(pos), crate::ids::DEFAULT_SURFACE_Z);
+
+    world.set_surface_z(pos, 2);
+    assert_eq!(world.surface_z_at(pos), 2);
+    assert_eq!(world.snapshot().surface_z.get(&pos), Some(&2));
+
+    world.set_surface_z(pos, crate::ids::DEFAULT_SURFACE_Z);
+    assert_eq!(world.surface_z_at(pos), crate::ids::DEFAULT_SURFACE_Z);
+    assert!(!world.snapshot().surface_z.contains_key(&pos));
+}
+
+#[test]
+fn building_footprint_rejects_mixed_surface_levels() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    world.set_surface_z(TilePos::new(1, 1), 2);
+
+    let error = world
+        .apply_core_command_for_tests(SimCommand::PlaceBuilding {
+            def_id: "wooden_chest".to_string(),
+            origin: TilePos::new(0, 0),
+            direction: Direction::East,
+            inserter_drop_direction: None,
+        })
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        SimCommandError::UnevenTerrain {
+            origin: TilePos::new(0, 0),
+            pos: TilePos::new(1, 1),
+            expected_z: crate::ids::DEFAULT_SURFACE_Z,
+            found_z: 2,
+        }
+    );
+}
+
+#[test]
+fn placed_building_snapshot_and_ports_store_surface_z() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    let footprint = world
+        .building_footprint_for("wooden_chest", TilePos::new(0, 0), Direction::East)
+        .unwrap();
+    for pos in footprint {
+        world.set_surface_z(pos, 2);
+    }
+
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBuilding {
+            def_id: "wooden_chest".to_string(),
+            origin: TilePos::new(0, 0),
+            direction: Direction::East,
+            inserter_drop_direction: None,
+        })
+        .unwrap();
+
+    let snapshot = world.building_snapshots().remove(0);
+    assert_eq!(snapshot.surface_z, 2);
+    let building = world.building_at(TilePos::new(0, 0)).unwrap();
+    assert!(building.ports.iter().all(|port| port.surface_z == 2));
+}
+
+#[test]
+fn save_roundtrip_preserves_building_surface_z_and_ports() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    let footprint = world
+        .building_footprint_for("wooden_chest", TilePos::new(0, 0), Direction::East)
+        .unwrap();
+    for pos in footprint {
+        world.set_surface_z(pos, 3);
+    }
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBuilding {
+            def_id: "wooden_chest".to_string(),
+            origin: TilePos::new(0, 0),
+            direction: Direction::East,
+            inserter_drop_direction: None,
+        })
+        .unwrap();
+
+    let restored = SimWorld::from_snapshot(catalog_for_tests(), world.snapshot()).unwrap();
+
+    let snapshot = restored.building_snapshots().remove(0);
+    assert_eq!(snapshot.surface_z, 3);
+    let building = restored.building_at(TilePos::new(0, 0)).unwrap();
+    assert!(building.ports.iter().all(|port| port.surface_z == 3));
+}
+
+#[test]
+fn ordinary_belts_on_different_surface_z_do_not_connect() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    world.set_surface_z(TilePos::new(1, 0), 1);
+
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBelt {
+            pos: TilePos::new(0, 0),
+            direction: Direction::East,
+            input_direction: Direction::East,
+            speed: UnitsPerTick::new(8),
+        })
+        .unwrap();
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBelt {
+            pos: TilePos::new(1, 0),
+            direction: Direction::East,
+            input_direction: Direction::East,
+            speed: UnitsPerTick::new(8),
+        })
+        .unwrap();
+
+    assert_eq!(
+        world
+            .topology_graph
+            .belt(TilePos::new(0, 0))
+            .unwrap()
+            .surface_z,
+        0
+    );
+    assert_eq!(
+        world
+            .topology_graph
+            .belt(TilePos::new(1, 0))
+            .unwrap()
+            .surface_z,
+        1
+    );
+
+    let mut line_paths = world
+        .transport
+        .line_ids_sorted()
+        .filter_map(|line_id| world.transport.line(line_id))
+        .map(|line| {
+            line.path()
+                .tiles()
+                .iter()
+                .map(|tile| tile.pos)
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    line_paths.sort_by_key(|path| path[0]);
+
+    assert_eq!(
+        line_paths,
+        vec![vec![TilePos::new(0, 0)], vec![TilePos::new(1, 0)]]
+    );
+    assert!(world.transport.nodes_sorted().all(|node| {
+        !matches!(
+            node.kind,
+            TransportNodeKind::EndTransfer | TransportNodeKind::SideLoad { .. }
+        )
+    }));
+}
+
+#[test]
+fn inserter_does_not_pick_up_storage_across_surface_levels() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    world.set_surface_z(TilePos::new(2, 0), 1);
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBuilding {
+            def_id: "wooden_chest".to_string(),
+            origin: TilePos::new(0, 0),
+            direction: Direction::East,
+            inserter_drop_direction: None,
+        })
+        .unwrap();
+    let chest_id = world.building_snapshots()[0].id;
+    world
+        .insert_into_inventory_for_tests(
+            chest_id,
+            CoreInventoryRole::Storage,
+            CoreItemStack {
+                kind: TEST_WOOD,
+                amount: 1,
+            },
+        )
+        .unwrap();
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBuilding {
+            def_id: "basic_inserter".to_string(),
+            origin: TilePos::new(2, 0),
+            direction: Direction::West,
+            inserter_drop_direction: Some(Direction::East),
+        })
+        .unwrap();
+    let inserter_building = world
+        .buildings
+        .get(&world.building_snapshots()[1].id)
+        .unwrap()
+        .clone();
+    let SimBuildingState::Inserter(inserter) = inserter_building.state.clone() else {
+        panic!("expected inserter");
+    };
+
+    assert_eq!(
+        world.try_inserter_pickup(&inserter_building, &inserter, &mut SimDiff::default()),
+        None
+    );
+}
+
+#[test]
+fn inserter_picks_up_storage_on_same_surface_level() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    for pos in [
+        TilePos::new(0, 0),
+        TilePos::new(0, 1),
+        TilePos::new(1, 0),
+        TilePos::new(1, 1),
+        TilePos::new(2, 0),
+    ] {
+        world.set_surface_z(pos, 1);
+    }
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBuilding {
+            def_id: "wooden_chest".to_string(),
+            origin: TilePos::new(0, 0),
+            direction: Direction::East,
+            inserter_drop_direction: None,
+        })
+        .unwrap();
+    let chest_id = world.building_snapshots()[0].id;
+    world
+        .insert_into_inventory_for_tests(
+            chest_id,
+            CoreInventoryRole::Storage,
+            CoreItemStack {
+                kind: TEST_WOOD,
+                amount: 1,
+            },
+        )
+        .unwrap();
+    world
+        .apply_core_command_for_tests(SimCommand::PlaceBuilding {
+            def_id: "basic_inserter".to_string(),
+            origin: TilePos::new(2, 0),
+            direction: Direction::West,
+            inserter_drop_direction: Some(Direction::East),
+        })
+        .unwrap();
+    let inserter_building = world
+        .buildings
+        .get(&world.building_snapshots()[1].id)
+        .unwrap()
+        .clone();
+    let SimBuildingState::Inserter(inserter) = inserter_building.state.clone() else {
+        panic!("expected inserter");
+    };
+
+    assert_eq!(
+        world.try_inserter_pickup(&inserter_building, &inserter, &mut SimDiff::default()),
+        Some(CoreItemStack {
+            kind: TEST_WOOD,
+            amount: 1,
+        })
+    );
+}
+
+#[test]
+fn apply_generated_region_imports_surface_z() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    let mut generated = crate::worldgen::WorldGenerator::new_default(123)
+        .generate_rect(TilePos::new(0, 0), TilePos::new(0, 0));
+    generated.terrain_tiles[0].surface_z = 3;
+
+    world.apply_generated_region(&generated).unwrap();
+
+    assert_eq!(world.surface_z_at(TilePos::new(0, 0)), 3);
+}
+
+#[test]
+fn save_roundtrip_preserves_surface_z() {
+    let mut world = SimWorld::with_catalog(catalog_for_tests());
+    world.set_surface_z(TilePos::new(2, 5), 1);
+    world.set_surface_z(TilePos::new(3, 5), 2);
+
+    let restored = SimWorld::from_snapshot(catalog_for_tests(), world.snapshot()).unwrap();
+
+    assert_eq!(restored.surface_z_at(TilePos::new(2, 5)), 1);
+    assert_eq!(restored.surface_z_at(TilePos::new(3, 5)), 2);
+    assert_eq!(
+        restored.surface_z_at(TilePos::new(99, 99)),
+        crate::ids::DEFAULT_SURFACE_Z
+    );
+}
+
+#[test]
+fn restore_normalizes_default_surface_z_entries() {
+    let mut snapshot = SimWorld::with_catalog(catalog_for_tests()).snapshot();
+    let pos = TilePos::new(6, 7);
+    snapshot
+        .surface_z
+        .insert(pos, crate::ids::DEFAULT_SURFACE_Z);
+
+    let restored = SimWorld::from_snapshot(catalog_for_tests(), snapshot).unwrap();
+
+    assert_eq!(restored.surface_z_at(pos), crate::ids::DEFAULT_SURFACE_Z);
+    assert!(!restored.snapshot().surface_z.contains_key(&pos));
+}
+
+#[test]
 fn default_world_keeps_existing_belt_placement_behavior() {
     let mut world = SimWorld::default();
 
@@ -11951,6 +12253,7 @@ fn pending_loaded_container_surface_drop_keeps_tile_occupied_after_app_sync() {
 
     assert!(!world.try_inserter_drop_to_surface(
         TilePos::new(2, 3),
+        crate::ids::DEFAULT_SURFACE_Z,
         CoreItemStack {
             kind: TEST_WOOD,
             amount: 1,
@@ -13011,7 +13314,11 @@ fn malformed_underground_runtime_lane_is_hidden_and_not_pickable() {
     assert!(world.take_item_from_belt_tile(TilePos::new(0, 0)).is_err());
     assert!(
         world
-            .belt_pickup_candidates(TilePos::new(0, 0), TilePos::new(0, -1))
+            .belt_pickup_candidates(
+                TilePos::new(0, 0),
+                TilePos::new(0, -1),
+                crate::ids::DEFAULT_SURFACE_Z
+            )
             .is_empty()
     );
     assert_eq!(underground_runtime_items(&world).len(), 1);

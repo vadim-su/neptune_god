@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 
 /// Tiles per chunk edge (matches render chunking in the app).
 pub const CHUNK_SIZE: i32 = 32;
+/// Default surface level for old saves and flat worlds.
+pub const DEFAULT_SURFACE_Z: SurfaceZ = 0;
+
+/// Discrete vertical surface level for z-level terrain.
+pub type SurfaceZ = i16;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct TilePos {
@@ -20,6 +25,35 @@ impl TilePos {
 
     pub const fn chunk_pos(self) -> ChunkPos {
         ChunkPos::new(self.x.div_euclid(CHUNK_SIZE), self.y.div_euclid(CHUNK_SIZE))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+pub struct TileCoord3 {
+    pub x: i32,
+    pub y: i32,
+    pub z: SurfaceZ,
+}
+
+impl TileCoord3 {
+    pub const fn new(x: i32, y: i32, z: SurfaceZ) -> Self {
+        Self { x, y, z }
+    }
+
+    pub const fn from_tile_pos(pos: TilePos, z: SurfaceZ) -> Self {
+        Self {
+            x: pos.x,
+            y: pos.y,
+            z,
+        }
+    }
+
+    pub const fn tile_pos(self) -> TilePos {
+        TilePos::new(self.x, self.y)
+    }
+
+    pub const fn chunk_pos(self) -> ChunkPos {
+        self.tile_pos().chunk_pos()
     }
 }
 
@@ -143,6 +177,15 @@ impl IdAllocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tile_coord3_keeps_z_separate_from_chunking() {
+        let coord = TileCoord3::new(33, -1, 2);
+
+        assert_eq!(coord.tile_pos(), TilePos::new(33, -1));
+        assert_eq!(coord.chunk_pos(), ChunkPos::new(1, -1));
+        assert_eq!(coord.z, 2);
+    }
 
     #[test]
     fn allocator_returns_stable_monotonic_ids() {

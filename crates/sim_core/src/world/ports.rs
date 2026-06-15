@@ -13,6 +13,7 @@ pub(super) fn building_ports(
     origin: TilePos,
     footprint: &[TilePos],
     direction: Direction,
+    surface_z: SurfaceZ,
     def: &crate::catalog::CoreBuildingDef,
 ) -> Vec<SimBuildingPort> {
     let mut ports = Vec::new();
@@ -23,6 +24,7 @@ pub(super) fn building_ports(
                 .map(|tile| SimBuildingPort {
                     role: port.role,
                     tile,
+                    surface_z,
                     accepts: port.accepts.clone(),
                 }),
         );
@@ -37,6 +39,7 @@ pub(super) fn building_ports(
                 ports.push(SimBuildingPort {
                     role: CorePortRole::Input,
                     tile,
+                    surface_z,
                     accepts: inventory.accepts.clone(),
                 });
             }
@@ -49,6 +52,7 @@ pub(super) fn building_ports(
                 .map(|tile| SimBuildingPort {
                     role: port.role,
                     tile,
+                    surface_z,
                     accepts: port.accepts.clone(),
                 }),
         );
@@ -63,13 +67,17 @@ pub(super) fn building_ports(
             ports.push(SimBuildingPort {
                 role,
                 tile,
+                surface_z,
                 accepts: inventory.accepts.clone(),
             });
         }
     }
     ports.sort_by_key(|port| (port.tile.y, port.tile.x, core_port_role_order(port.role)));
     ports.dedup_by(|left, right| {
-        left.role == right.role && left.tile == right.tile && left.accepts == right.accepts
+        left.role == right.role
+            && left.tile == right.tile
+            && left.surface_z == right.surface_z
+            && left.accepts == right.accepts
     });
     ports
 }

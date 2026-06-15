@@ -6,6 +6,7 @@ const BuildingGeometryScript := preload("res://game/buildings/building_geometry.
 const ConveyorBeltSurfaceShader := preload("res://game/buildings/conveyor_belt_surface.gdshader")
 const ConveyorBeltSurfaceTexture := preload("res://assets/images/buildings/belt_surface.png")
 const BUILDING_VISUAL_Y := 0.24
+const SURFACE_LEVEL_HEIGHT := 1.0
 const BELT_CORNER_DEFAULT_OUTPUT_QUARTER_TURNS := 3
 const BELT_CORNER_MIRROR_DEFAULT_OUTPUT_QUARTER_TURNS := 1
 
@@ -39,7 +40,9 @@ static func render_from_sim(
 		var model_info := _building_model_info(building)
 		var model := _instantiate_building_model(def_id, str(model_info["path"]))
 		if model != null:
-			model.position = BuildingGeometryScript.footprint_center(footprint)
+			var model_position := BuildingGeometryScript.footprint_center(footprint)
+			model_position.y = _surface_y(building)
+			model.position = model_position
 			model.rotation.y = float(model_info["rotation_y"])
 			_apply_belt_surface_materials(model, building)
 			building_node.add_child(model)
@@ -157,9 +160,13 @@ static func _add_fallback_building_tiles(parent: Node3D, footprint: Array, mater
 		var mesh := BoxMesh.new()
 		mesh.size = Vector3(0.86, 0.48, 0.86)
 		instance.mesh = mesh
-		instance.position = Vector3(float(tile["x"]), BUILDING_VISUAL_Y, float(tile["y"]))
+		instance.position = Vector3(float(tile["x"]), _surface_y(tile, BUILDING_VISUAL_Y), float(tile["y"]))
 		instance.material_override = material
 		parent.add_child(instance)
+
+
+static func _surface_y(building_or_tile: Dictionary, base_y: float = 0.0) -> float:
+	return base_y + float(int(building_or_tile.get("surface_z", 0))) * SURFACE_LEVEL_HEIGHT
 
 
 static func _solid_material(color: Color) -> StandardMaterial3D:

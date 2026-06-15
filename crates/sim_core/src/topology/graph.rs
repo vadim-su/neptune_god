@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::TilePos;
+use crate::ids::{DEFAULT_SURFACE_Z, SurfaceZ, TilePos};
 use crate::units::UnitsPerTick;
 
 #[derive(Clone, Copy, Debug, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -78,6 +78,9 @@ pub struct BeltTile {
     pub direction: Direction,
     /// Only incoming direction that continues this packed transport line.
     pub input_direction: Direction,
+    /// Surface level occupied by this belt.
+    #[serde(default = "default_surface_z")]
+    pub surface_z: SurfaceZ,
 }
 
 impl BeltTile {
@@ -89,6 +92,7 @@ impl BeltTile {
         Self {
             direction,
             input_direction: direction,
+            surface_z: DEFAULT_SURFACE_Z,
         }
     }
 
@@ -96,8 +100,18 @@ impl BeltTile {
         Self {
             direction,
             input_direction,
+            surface_z: DEFAULT_SURFACE_Z,
         }
     }
+
+    pub const fn on_surface(mut self, surface_z: SurfaceZ) -> Self {
+        self.surface_z = surface_z;
+        self
+    }
+}
+
+fn default_surface_z() -> SurfaceZ {
+    DEFAULT_SURFACE_Z
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -214,6 +228,7 @@ mod tests {
 
         assert_eq!(belt.direction, Direction::North);
         assert_eq!(belt.input_direction, Direction::North);
+        assert_eq!(belt.surface_z, DEFAULT_SURFACE_Z);
     }
 
     #[test]
@@ -222,6 +237,14 @@ mod tests {
 
         assert_eq!(belt.input_direction, Direction::East);
         assert_eq!(belt.direction, Direction::North);
+        assert_eq!(belt.surface_z, DEFAULT_SURFACE_Z);
+    }
+
+    #[test]
+    fn belt_tile_can_store_surface_level() {
+        let belt = BeltTile::turn(Direction::East, Direction::North).on_surface(2);
+
+        assert_eq!(belt.surface_z, 2);
     }
 
     #[test]

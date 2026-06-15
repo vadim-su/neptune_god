@@ -18,6 +18,8 @@ const MAX_MAP_TEXTURE_JOBS_STARTED_PER_FRAME := 1
 const MAX_ACTIVE_MAP_TEXTURE_TASKS := 1
 const MAX_CHUNK_TEXTURE_UPLOADS_PER_FRAME := 1
 const MAX_RETAINED_MAP_CHUNK_TEXTURES := 128
+const FULLSCREEN_CHART_CACHE_PADDING_TILES := 96
+const MAX_FULLSCREEN_CHART_CACHE_PIXELS := 12000000
 const PLAYER_MARKER_RADIUS := 6.0
 const MAP_TEXTURE_BACKGROUND := Color(0.0, 0.0, 0.0, 0.0)
 const MAP_BACKGROUND_COLOR := Color(0.028, 0.038, 0.034, 1.0)
@@ -230,6 +232,12 @@ var _visible_resource_lookup_cache_revision := -1
 var _visible_resource_lookup_cache_rebuild_count := 0
 var _hovered_resource_vein_cache_key := ""
 var _hovered_resource_vein_cache: Dictionary = {}
+var _fullscreen_chart_cache_texture: ImageTexture = null
+var _fullscreen_chart_cache_bounds := Rect2i()
+var _fullscreen_chart_cache_revision := -1
+var _fullscreen_chart_cache_current_visible_rect := Rect2i()
+var _fullscreen_chart_cache_background_alpha := -1.0
+var _fullscreen_chart_cache_build_count := 0
 
 
 static func collect_resource_vein(start: Vector2i, tiles: Array, visible_rect: Rect2i) -> Dictionary:
@@ -465,6 +473,8 @@ func set_pixels_per_tile(value: float) -> void:
 	if is_equal_approx(_pixels_per_tile, next_pixels_per_tile):
 		return
 	_pixels_per_tile = next_pixels_per_tile
+	if is_fullscreen_open():
+		_resource_hover_suspended = true
 	view_changed.emit()
 	_request_redraw()
 
@@ -586,6 +596,18 @@ func uploaded_map_chunk_image_for_tests(chunk_key: String) -> Image:
 	return texture.get_image()
 
 
+func ensure_fullscreen_chart_cache_for_tests(bounds: Rect2i) -> bool:
+	return _ensure_fullscreen_chart_cache(bounds, map_background_alpha())
+
+
+func fullscreen_chart_cache_texture_for_tests() -> Texture2D:
+	return _fullscreen_chart_cache_texture
+
+
+func fullscreen_chart_cache_build_count_for_tests() -> int:
+	return _fullscreen_chart_cache_build_count
+
+
 func hovered_resource_vein_for_tests(hovered: Vector2i) -> Dictionary:
 	return _resource_vein_for_hovered_tile(hovered)
 
@@ -660,11 +682,14 @@ func _draw() -> void:
 	var tile_scale := _tile_scale(bounds)
 	var chart_alpha := chart_layer_alpha()
 	var background_alpha := map_background_alpha()
-	if background_alpha > 0.0:
+	var drew_cached_chart := false
+	if chart_alpha > 0.0:
+		drew_cached_chart = _draw_fullscreen_chart_cache(bounds, tile_scale, chart_alpha, background_alpha)
+	if not drew_cached_chart and background_alpha > 0.0:
 		_draw_map_background(bounds, tile_scale, background_alpha)
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.45, 0.58, 0.48, 0.80), false, 1.0)
 
-	if chart_alpha > 0.0:
+	if chart_alpha > 0.0 and not drew_cached_chart:
 		_draw_schematic_texture(bounds, tile_scale, chart_alpha)
 	if should_draw_map_markers():
 		_draw_player_marker(bounds, tile_scale)
@@ -751,6 +776,97 @@ func _draw_schematic_texture_region(
 	)
 	if not _is_minimap and not detailed_world_visible():
 		_draw_fog_regions(tile_bounds, target_bounds, tile_scale)
+
+
+func _draw_fullscreen_chart_cache(bounds: Rect2i, tile_scale: float, alpha: float, background_alpha: float) -> bool:
+	if not _can_use_fullscreen_chart_cache():
+		return false
+	if not _ensure_fullscreen_chart_cache(bounds, background_alpha):
+		return false
+	var source_rect := _tile_range_image_rect(bounds, _fullscreen_chart_cache_bounds)
+	draw_texture_rect_region(
+		_fullscreen_chart_cache_texture,
+		_tile_region_local_rect(bounds, bounds, tile_scale),
+		Rect2(source_rect),
+		Color(1.0, 1.0, 1.0, alpha)
+	)
+	return true
+
+
+func _can_use_fullscreen_chart_cache() -> bool:
+	return is_fullscreen_open() and not detailed_world_visible()
+
+
+func _ensure_fullscreen_chart_cache(bounds: Rect2i, background_alpha: float) -> bool:
+	if not _can_use_fullscreen_chart_cache():
+		return false
+	if (
+		_fullscreen_chart_cache_texture != null
+		and _fullscreen_chart_cache_revision == _map_chunk_entries_revision
+		and _fullscreen_chart_cache_current_visible_rect == _current_visible_rect
+		and is_equal_approx(_fullscreen_chart_cache_background_alpha, background_alpha)
+		and _rect_contains_rect(_fullscreen_chart_cache_bounds, bounds)
+	):
+		return true
+
+	var cache_bounds := _expanded_fullscreen_chart_cache_bounds(bounds)
+	if cache_bounds.size.x <= 0 or cache_bounds.size.y <= 0:
+		return false
+	if cache_bounds.size.x * cache_bounds.size.y > MAX_FULLSCREEN_CHART_CACHE_PIXELS:
+		return false
+
+	var image := Image.create(cache_bounds.size.x, cache_bounds.size.y, false, Image.FORMAT_RGBA8)
+	var background := MAP_BACKGROUND_COLOR
+	background.a *= background_alpha
+	image.fill(background)
+	for chunk_key: String in _visible_map_chunk_keys_for_bounds(cache_bounds):
+		var entry: Dictionary = _map_chunk_entries[chunk_key]
+		if not entry.has("texture"):
+			continue
+		var chunk_bounds: Rect2i = entry["bounds"]
+		var visible_bounds := _rect_intersection(cache_bounds, chunk_bounds)
+		if visible_bounds.size.x <= 0 or visible_bounds.size.y <= 0:
+			continue
+		var texture: Texture2D = entry["texture"]
+		var chunk_image := texture.get_image()
+		var source_rect := _tile_range_image_rect(visible_bounds, chunk_bounds)
+		var destination_rect := _tile_range_image_rect(visible_bounds, cache_bounds)
+		image.blit_rect(chunk_image, source_rect, destination_rect.position)
+	_blend_fullscreen_chart_cache_fog(image, cache_bounds)
+
+	_fullscreen_chart_cache_texture = ImageTexture.create_from_image(image)
+	_fullscreen_chart_cache_bounds = cache_bounds
+	_fullscreen_chart_cache_revision = _map_chunk_entries_revision
+	_fullscreen_chart_cache_current_visible_rect = _current_visible_rect
+	_fullscreen_chart_cache_background_alpha = background_alpha
+	_fullscreen_chart_cache_build_count += 1
+	return true
+
+
+func _expanded_fullscreen_chart_cache_bounds(bounds: Rect2i) -> Rect2i:
+	var padding := Vector2i(FULLSCREEN_CHART_CACHE_PADDING_TILES, FULLSCREEN_CHART_CACHE_PADDING_TILES)
+	return Rect2i(bounds.position - padding, bounds.size + padding * 2)
+
+
+func _blend_fullscreen_chart_cache_fog(image: Image, cache_bounds: Rect2i) -> void:
+	var fog_color := MAP_BACKGROUND_COLOR
+	fog_color.a = 0.44
+	for fog_region: Rect2i in _tile_regions_outside_rect(
+		cache_bounds,
+		_rect_intersection(cache_bounds, _current_visible_rect)
+	):
+		var image_rect := _tile_range_image_rect(fog_region, cache_bounds)
+		if image_rect.size.x <= 0 or image_rect.size.y <= 0:
+			continue
+		var fog_image := Image.create(image_rect.size.x, image_rect.size.y, false, Image.FORMAT_RGBA8)
+		fog_image.fill(fog_color)
+		image.blend_rect(fog_image, Rect2i(Vector2i.ZERO, image_rect.size), image_rect.position)
+
+
+func _invalidate_fullscreen_chart_cache() -> void:
+	_fullscreen_chart_cache_texture = null
+	_fullscreen_chart_cache_bounds = Rect2i()
+	_fullscreen_chart_cache_revision = -1
 
 
 func _draw_fog_regions(tile_bounds: Rect2i, target_bounds: Rect2i, tile_scale: float) -> void:
@@ -1043,6 +1159,7 @@ func _apply_ready_map_textures(limit: int) -> void:
 		_map_chunk_entries[chunk_key] = entry
 		applied_any = true
 	if applied_any:
+		_invalidate_fullscreen_chart_cache()
 		_prune_retained_map_chunk_texture_cache()
 		_request_redraw()
 
@@ -1530,6 +1647,12 @@ func _rect_intersection(a: Rect2i, b: Rect2i) -> Rect2i:
 	var b_end := b.position + b.size
 	var max_pos := Vector2i(mini(a_end.x, b_end.x), mini(a_end.y, b_end.y))
 	return Rect2i(min_pos, Vector2i(maxi(max_pos.x - min_pos.x, 0), maxi(max_pos.y - min_pos.y, 0)))
+
+
+func _rect_contains_rect(outer: Rect2i, inner: Rect2i) -> bool:
+	if inner.size.x <= 0 or inner.size.y <= 0:
+		return true
+	return _rect_intersection(outer, inner) == inner
 
 
 func _tile_range_image_rect(tile_bounds: Rect2i, image_bounds: Rect2i) -> Rect2i:

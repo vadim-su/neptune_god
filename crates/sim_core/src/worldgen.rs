@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use crate::ids::TilePos;
+use crate::ids::{DEFAULT_SURFACE_Z, SurfaceZ, TilePos};
 
 pub const DEFAULT_WORLD_SEED: u64 = 0x6E65_7074_756E_6501;
 
@@ -10,6 +10,7 @@ pub const DEFAULT_WORLD_SEED: u64 = 0x6E65_7074_756E_6501;
 pub struct GeneratedTerrainTile {
     pub pos: TilePos,
     pub terrain_id: String,
+    pub surface_z: SurfaceZ,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,7 +147,11 @@ impl WorldGenerator {
                 let pos = TilePos::new(x, y);
                 let terrain_id = self.terrain_at(pos);
                 terrain_by_pos.insert(pos, terrain_id.clone());
-                terrain_tiles.push(GeneratedTerrainTile { pos, terrain_id });
+                terrain_tiles.push(GeneratedTerrainTile {
+                    pos,
+                    terrain_id,
+                    surface_z: DEFAULT_SURFACE_Z,
+                });
             }
         }
 
@@ -664,6 +669,19 @@ mod tests {
         let b = generator.generate_square_around_spawn(32);
 
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn generated_terrain_tiles_default_to_base_surface_level() {
+        let generator = WorldGenerator::new_default(123);
+        let generated = generator.generate_square_around_spawn(4);
+
+        assert!(
+            generated
+                .terrain_tiles
+                .iter()
+                .all(|tile| tile.surface_z == crate::ids::DEFAULT_SURFACE_Z)
+        );
     }
 
     #[test]

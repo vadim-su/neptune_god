@@ -2,6 +2,7 @@ extends Node3D
 class_name BuildGhost
 
 const BUILD_GHOST_Y := 0.075
+const SURFACE_LEVEL_HEIGHT := 1.0
 const GHOST_VALID_COLOR := Color(0.28, 0.78, 1.0, 0.38)
 const GHOST_BLOCKED_COLOR := Color(1.0, 0.22, 0.18, 0.38)
 
@@ -27,9 +28,13 @@ func _sync_tiles(footprint: Array, color: Color) -> void:
 		var mesh := PlaneMesh.new()
 		mesh.size = Vector2(0.96, 0.96)
 		instance.mesh = mesh
-		instance.position = Vector3(float(tile["x"]), BUILD_GHOST_Y, float(tile["y"]))
+		instance.position = Vector3(float(tile["x"]), _tile_y(tile), float(tile["y"]))
 		instance.material_override = _transparent_material(color)
 		add_child(instance)
+
+
+func _tile_y(tile: Dictionary) -> float:
+	return BUILD_GHOST_Y + float(int(tile.get("surface_z", 0))) * SURFACE_LEVEL_HEIGHT
 
 
 func _transparent_material(color: Color) -> StandardMaterial3D:

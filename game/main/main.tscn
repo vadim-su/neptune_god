@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3 uid="uid://rsh7othplwn4"]
+[gd_scene load_steps=10 format=3 uid="uid://rsh7othplwn4"]
 
 [ext_resource type="Script" uid="uid://c8clmmuy2i6wj" path="res://game/main/main.gd" id="1_main"]
 [ext_resource type="Script" uid="uid://2s5aawf7ye74" path="res://game/world/environment.gd" id="2_environment"]
@@ -6,15 +6,52 @@
 [ext_resource type="PackedScene" path="res://game/player/player.tscn" id="4_player"]
 [ext_resource type="PackedScene" path="res://game/ui/fps_counter.tscn" id="5_fps_counter"]
 
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_scene"]
+sky_top_color = Color(0.055, 0.082, 0.095, 1)
+sky_horizon_color = Color(0.26, 0.31, 0.27, 1)
+ground_bottom_color = Color(0.025, 0.032, 0.027, 1)
+ground_horizon_color = Color(0.14, 0.17, 0.13, 1)
+sun_angle_max = 4.0
+sun_curve = 0.18
+
+[sub_resource type="Sky" id="Sky_scene"]
+sky_material = SubResource("ProceduralSkyMaterial_scene")
+
 [sub_resource type="Environment" id="Environment_scene"]
-background_mode = 1
-background_color = Color(0.0352941, 0.0431373, 0.0392157, 1)
+background_mode = 2
+sky = SubResource("Sky_scene")
+sky_custom_fov = 72.0
 ambient_light_source = 2
-ambient_light_color = Color(0.78, 0.84, 0.8, 1)
-ambient_light_energy = 0.55
+ambient_light_color = Color(0.58, 0.66, 0.6, 1)
+ambient_light_energy = 0.38
+reflected_light_source = 1
 tonemap_mode = 2
+tonemap_exposure = 1.08
+tonemap_white = 6.0
 glow_enabled = true
-glow_intensity = 0.12
+glow_intensity = 0.18
+glow_bloom = 0.06
+fog_enabled = true
+fog_light_color = Color(0.52, 0.62, 0.56, 1)
+fog_light_energy = 0.24
+fog_sun_scatter = 0.08
+fog_density = 0.0024
+fog_height = 0.4
+fog_height_density = 0.009
+volumetric_fog_enabled = true
+volumetric_fog_density = 0.0048
+volumetric_fog_albedo = Color(0.48, 0.58, 0.52, 1)
+volumetric_fog_emission = Color(0.004, 0.006, 0.005, 1)
+volumetric_fog_length = 56.0
+volumetric_fog_detail_spread = 1.4
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_sim_speed_panel"]
+bg_color = Color(0.04, 0.045, 0.04, 0.78)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.56, 0.76, 0.42, 0.55)
 
 [node name="Main" type="Node3D" unique_id=462620492]
 script = ExtResource("1_main")
@@ -35,12 +72,21 @@ fov = 48.0
 
 [node name="Sun" type="DirectionalLight3D" parent="." unique_id=1701196171]
 transform = Transform3D(0.707107, -0.5, 0.5, 0, 0.707107, 0.707107, -0.707107, -0.5, 0.5, 0, 0, 0)
-light_energy = 2.1
-light_angular_distance = 0.6
+light_color = Color(1, 0.86, 0.62, 1)
+light_energy = 2.45
+light_indirect_energy = 1.35
+light_angular_distance = 1.15
 shadow_enabled = true
-shadow_blur = 1.6
+shadow_blur = 2.2
 directional_shadow_blend_splits = true
 directional_shadow_max_distance = 80.0
+
+[node name="SkyFill" type="DirectionalLight3D" parent="."]
+transform = Transform3D(-0.819152, -0.198266, -0.538986, 0, 0.938493, -0.345298, 0.573576, -0.28284, -0.769751, 0, 0, 0)
+light_color = Color(0.45, 0.62, 0.78, 1)
+light_energy = 0.22
+light_indirect_energy = 0.0
+shadow_enabled = false
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=55554594]
 environment = SubResource("Environment_scene")
@@ -60,6 +106,40 @@ offset_bottom = 104.0
 unique_name_in_owner = true
 layout_mode = 2
 text = "Starting Neptune simulation..."
+
+[node name="SimulationSpeedPanel" type="PanelContainer" parent="Hud"]
+unique_name_in_owner = true
+offset_left = 16.0
+offset_top = 112.0
+offset_right = 180.0
+offset_bottom = 148.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_sim_speed_panel")
+
+[node name="SimulationSpeedControls" type="HBoxContainer" parent="Hud/SimulationSpeedPanel"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="SimulationSpeedDownButton" type="Button" parent="Hud/SimulationSpeedPanel/SimulationSpeedControls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(32, 28)
+layout_mode = 2
+text = "-"
+
+[node name="SimulationSpeedLabel" type="Label" parent="Hud/SimulationSpeedPanel/SimulationSpeedControls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(76, 28)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.96, 0.84, 1)
+theme_override_font_sizes/font_size = 14
+text = "TPS: 60"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="SimulationSpeedUpButton" type="Button" parent="Hud/SimulationSpeedPanel/SimulationSpeedControls"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(32, 28)
+layout_mode = 2
+text = "+"
 
 [node name="FpsCounter" parent="Hud" unique_id=177698649 instance=ExtResource("5_fps_counter")]
 unique_name_in_owner = true

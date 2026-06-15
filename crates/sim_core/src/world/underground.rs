@@ -170,7 +170,8 @@ impl SimWorld {
         partner: BuildingId,
     ) -> Result<(), SimCommandError> {
         let footprint = footprint_tiles(origin, &def.footprint);
-        let ports = building_ports(origin, &footprint, direction, def);
+        let surface_z = self.surface_z_at(origin);
+        let ports = building_ports(origin, &footprint, direction, surface_z, def);
         self.building_occupancy.insert(origin, id);
         self.building_by_origin.insert(origin, id);
         self.buildings.insert(
@@ -180,6 +181,7 @@ impl SimWorld {
                 def_id: def.id.clone(),
                 kind: def.kind,
                 origin,
+                surface_z,
                 direction,
                 footprint,
                 ports,
@@ -328,8 +330,10 @@ impl SimWorld {
         }
 
         let new_direction = runtime.direction.opposite();
-        self.topology_graph
-            .set_belt(pos, BeltTile::turn(new_direction, new_direction));
+        self.topology_graph.set_belt(
+            pos,
+            BeltTile::turn(new_direction, new_direction).on_surface(self.surface_z_at(pos)),
+        );
         if let Some(speed_units) = self.occupied_tiles.get(&pos).copied() {
             self.occupied_tiles.insert(pos, speed_units);
         }

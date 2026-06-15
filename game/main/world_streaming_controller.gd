@@ -24,7 +24,7 @@ func setup(
 	preload_chunk_ring = next_preload_chunk_ring
 
 
-func sync_around_position(player_position: Vector3, force := false) -> bool:
+func sync_around_position(player_position: Vector3, force := false) -> Variant:
 	if environment == null or tile_provider == null:
 		return false
 
@@ -44,7 +44,7 @@ func sync_around_position(player_position: Vector3, force := false) -> bool:
 	)
 	visible_chunk_rect = chunk_rect
 	visible_chunk_rect_valid = true
-	return true
+	return chunk_rect
 
 
 static func visible_chunk_rect_for(

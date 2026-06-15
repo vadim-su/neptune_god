@@ -29,6 +29,7 @@ use sim_core::ids::BuildingId;
 use sim_core::ids::CHUNK_SIZE;
 use sim_core::ids::ChunkPos;
 use sim_core::ids::ItemKindId;
+use sim_core::ids::SurfaceZ;
 use sim_core::ids::TilePos;
 use sim_core::inventory::{InsertMode, SimInventorySnapshot};
 use sim_core::topology::graph::Direction;
@@ -107,6 +108,12 @@ struct CharacterEquipmentUiSnapshot {
 struct ItemStackUiSnapshot {
     item: String,
     amount: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GodotFootprintTile {
+    pos: TilePos,
+    surface_z: SurfaceZ,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1308,6 +1315,16 @@ impl NeptuneSim {
     }
 
     #[func]
+    pub fn time_of_day_normalized(&self) -> f32 {
+        self.world.time_of_day().normalized()
+    }
+
+    #[func]
+    pub fn solar_factor(&self) -> f32 {
+        self.world.solar_factor().ppm() as f32 / 1_000_000.0
+    }
+
+    #[func]
     pub fn digest(&self) -> i64 {
         self.world.digest().0 as i64
     }
@@ -1364,7 +1381,7 @@ impl NeptuneSim {
         if !self.ensure_configured("building_footprint") {
             return VarArray::new();
         }
-        tile_pairs_to_var_array(building_footprint_for_godot(
+        footprint_tiles_to_var_array(building_footprint_tiles_for_godot(
             &self.world,
             def_id.to_string().as_str(),
             x,
@@ -1457,7 +1474,13 @@ impl NeptuneSim {
             .world
             .terrain_tiles_in_rect(self.map_min, self.map_max)
             .into_iter()
-            .map(|(pos, terrain_id)| sim_core::worldgen::GeneratedTerrainTile { pos, terrain_id })
+            .map(
+                |(pos, terrain_id)| sim_core::worldgen::GeneratedTerrainTile {
+                    pos,
+                    terrain_id,
+                    surface_z: self.world.surface_z_at(pos),
+                },
+            )
             .collect::<Vec<_>>();
         generated_tiles_to_var_array(&terrain_tiles, resources, self.map_min, self.map_max)
     }
@@ -1474,6 +1497,8 @@ impl NeptuneSim {
             building.set("def_id", snapshot.def_id.as_str());
             building.set("x", snapshot.origin.x);
             building.set("y", snapshot.origin.y);
+            building.set("z", i64::from(snapshot.surface_z));
+            building.set("surface_z", i64::from(snapshot.surface_z));
             building.set("direction", direction_name(snapshot.direction));
             building.set(
                 "quarter_turns",
@@ -1492,7 +1517,7 @@ impl NeptuneSim {
             }
             building.set(
                 "footprint",
-                &tile_pairs_to_var_array(building_footprint_for_godot(
+                &footprint_tiles_to_var_array(building_footprint_tiles_for_godot(
                     &self.world,
                     snapshot.def_id.as_str(),
                     snapshot.origin.x,
@@ -1717,6 +1742,7 @@ fn generated_tiles_to_var_array(
         tile.set("x", pos.x);
         tile.set("y", pos.y);
         tile.set("terrain", tile_data.terrain_id.clone());
+        tile.set("surface_z", i64::from(tile_data.surface_z));
         tile.set("render", in_core);
         if in_core {
             if let Some((resource, amount)) = resources.get(&pos) {
@@ -2052,6 +2078,7 @@ fn core_inventory_role_from_ui(role: &str) -> Option<CoreInventoryRole> {
     }
 }
 
+#[cfg(test)]
 fn building_footprint_for_godot(
     world: &SimWorld,
     def_id: &str,
@@ -2068,6 +2095,28 @@ fn building_footprint_for_godot(
         .unwrap_or_default()
         .into_iter()
         .map(|pos| (pos.x, pos.y))
+        .collect()
+}
+
+fn building_footprint_tiles_for_godot(
+    world: &SimWorld,
+    def_id: &str,
+    x: i32,
+    y: i32,
+    quarter_turns: i32,
+) -> Vec<GodotFootprintTile> {
+    world
+        .building_footprint_for(
+            def_id,
+            TilePos::new(x, y),
+            direction_from_quarter_turns(quarter_turns),
+        )
+        .unwrap_or_default()
+        .into_iter()
+        .map(|pos| GodotFootprintTile {
+            pos,
+            surface_z: world.surface_z_at(pos),
+        })
         .collect()
 }
 
@@ -2123,12 +2172,13 @@ fn belt_speed_tiles_per_second(world: &SimWorld, def_id: &str) -> f64 {
         / f64::from(DistanceUnits::UNITS_PER_TILE)
 }
 
-fn tile_pairs_to_var_array(tiles: Vec<(i32, i32)>) -> VarArray {
+fn footprint_tiles_to_var_array(tiles: Vec<GodotFootprintTile>) -> VarArray {
     let mut array = VarArray::new();
-    for (x, y) in tiles {
+    for tile_data in tiles {
         let mut tile = VarDictionary::new();
-        tile.set("x", x);
-        tile.set("y", y);
+        tile.set("x", tile_data.pos.x);
+        tile.set("y", tile_data.pos.y);
+        tile.set("surface_z", i64::from(tile_data.surface_z));
         array.push(&tile);
     }
     array
@@ -2737,6 +2787,27 @@ mod tests {
         assert_eq!(
             building_footprint_for_godot(&world, "basic_splitter", 10, 20, 1),
             vec![(10, 20), (11, 20)]
+        );
+    }
+
+    #[test]
+    fn footprint_bridge_exposes_surface_z_for_each_tile() {
+        let mut world = SimWorld::with_catalog(CoreCatalog::for_tests());
+        world.set_surface_z(TilePos::new(10, 20), 2);
+        world.set_surface_z(TilePos::new(10, 21), 2);
+
+        assert_eq!(
+            building_footprint_tiles_for_godot(&world, "basic_splitter", 10, 20, 0),
+            vec![
+                GodotFootprintTile {
+                    pos: TilePos::new(10, 20),
+                    surface_z: 2,
+                },
+                GodotFootprintTile {
+                    pos: TilePos::new(10, 21),
+                    surface_z: 2,
+                },
+            ]
         );
     }
 

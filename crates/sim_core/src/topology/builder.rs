@@ -157,6 +157,7 @@ fn line_predecessor_count(graph: &TopologyGraph, pos: TilePos) -> usize {
         .filter(|(candidate, belt)| {
             belt.direction.output_pos(*candidate) == pos
                 && belt.direction == target_belt.input_direction
+                && belt.surface_z == target_belt.surface_z
         })
         .count()
 }
@@ -173,6 +174,10 @@ fn should_stop_before_next(
     let Some(next_belt) = graph.belt(next) else {
         return false;
     };
+
+    if next_belt.surface_z != current_belt.surface_z {
+        return true;
+    }
 
     if next_belt.direction.output_pos(next) == current {
         return true;
@@ -202,6 +207,9 @@ fn is_closed_line(graph: &TopologyGraph, tiles: &[BuiltPathTile]) -> bool {
     let Some(last_belt) = graph.belt(*last) else {
         return false;
     };
+    if first_belt.surface_z != last_belt.surface_z {
+        return false;
+    }
     last_belt.direction.output_pos(*last) == *first
         && first_belt.input_direction == last_belt.direction
 }
@@ -262,6 +270,28 @@ mod tests {
         assert_eq!(
             topology.lines[1].surface_positions(),
             vec![TilePos::new(2, 0)]
+        );
+    }
+
+    #[test]
+    fn adjacent_belts_on_different_surface_levels_are_separate_lines() {
+        let mut graph = TopologyGraph::default();
+        graph.set_belt(TilePos::new(0, 0), BeltTile::new(Direction::East));
+        graph.set_belt(
+            TilePos::new(1, 0),
+            BeltTile::new(Direction::East).on_surface(1),
+        );
+
+        let topology = TopologyBuilder.rebuild(&graph);
+
+        assert_eq!(topology.lines.len(), 2);
+        assert_eq!(
+            topology.lines[0].surface_positions(),
+            vec![TilePos::new(0, 0)]
+        );
+        assert_eq!(
+            topology.lines[1].surface_positions(),
+            vec![TilePos::new(1, 0)]
         );
     }
 

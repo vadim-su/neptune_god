@@ -74,8 +74,8 @@ impl SimWorld {
         diff: &mut SimDiff,
     ) -> Option<CoreItemStack> {
         let tile = adjacent_tile(building.origin, inserter.pickup_direction);
-        let mut candidates = self.inventory_pickup_candidates(tile);
-        candidates.extend(self.belt_pickup_candidates(tile, building.origin));
+        let mut candidates = self.inventory_pickup_candidates(tile, building.surface_z);
+        candidates.extend(self.belt_pickup_candidates(tile, building.origin, building.surface_z));
         let candidate = choose_nearest_candidate(building.origin, candidates)?;
         match candidate.kind {
             InserterCandidateKind::Inventory { role, .. } => {
@@ -152,15 +152,31 @@ impl SimWorld {
         behavior_catalog: &BehaviorCatalog,
     ) -> bool {
         let tile = adjacent_tile(building.origin, inserter.drop_direction);
-        let mut candidates =
-            self.inventory_drop_candidates(tile, stack, behavior_host, behavior_catalog);
-        candidates.extend(self.belt_drop_candidates(tile, stack.kind, building.origin));
+        let mut candidates = self.inventory_drop_candidates(
+            tile,
+            building.surface_z,
+            stack,
+            behavior_host,
+            behavior_catalog,
+        );
+        candidates.extend(self.belt_drop_candidates(
+            tile,
+            stack.kind,
+            building.origin,
+            building.surface_z,
+        ));
         let item_rules = InventoryItemRules::from_catalog(&self.catalog);
         let Some(candidate) = choose_nearest_candidate(building.origin, candidates) else {
-            if self.inventory_drop_target_exists(tile, stack, behavior_host, behavior_catalog) {
+            if self.inventory_drop_target_exists(
+                tile,
+                building.surface_z,
+                stack,
+                behavior_host,
+                behavior_catalog,
+            ) {
                 return false;
             }
-            return self.try_inserter_drop_to_surface(tile, stack, diff);
+            return self.try_inserter_drop_to_surface(tile, building.surface_z, stack, diff);
         };
         match candidate.kind {
             InserterCandidateKind::Inventory { role, .. } => {
@@ -238,9 +254,13 @@ impl SimWorld {
     pub(super) fn try_inserter_drop_to_surface(
         &mut self,
         tile: TilePos,
+        surface_z: SurfaceZ,
         stack: CoreItemStack,
         diff: &mut SimDiff,
     ) -> bool {
+        if self.surface_z_at(tile) != surface_z {
+            return false;
+        }
         if self.building_occupancy.contains_key(&tile)
             || self.occupied_tiles.contains_key(&tile)
             || self.occupied_surface_tiles.contains(&tile)
@@ -252,7 +272,11 @@ impl SimWorld {
         true
     }
 
-    pub(super) fn inventory_pickup_candidates(&self, tile: TilePos) -> Vec<InserterCandidate> {
+    pub(super) fn inventory_pickup_candidates(
+        &self,
+        tile: TilePos,
+        surface_z: SurfaceZ,
+    ) -> Vec<InserterCandidate> {
         let mut candidates = self
             .buildings
             .values()
@@ -261,6 +285,7 @@ impl SimWorld {
                     .ports
                     .iter()
                     .filter(move |port| port.tile == tile)
+                    .filter(move |port| port.surface_z == surface_z)
                     .filter_map(move |port| port_inventory_role(port.role).map(|role| (port, role)))
                     .filter(|(_, role)| *role != CoreInventoryRole::Storage)
                     .flat_map(move |(port, role)| {
@@ -289,13 +314,14 @@ impl SimWorld {
                     })
             })
             .collect::<Vec<_>>();
-        candidates.extend(self.footprint_inventory_pickup_candidates(tile));
+        candidates.extend(self.footprint_inventory_pickup_candidates(tile, surface_z));
         candidates
     }
 
     pub(super) fn inventory_drop_candidates(
         &self,
         tile: TilePos,
+        surface_z: SurfaceZ,
         stack: CoreItemStack,
         behavior_host: &(impl BehaviorHost + ?Sized),
         behavior_catalog: &BehaviorCatalog,
@@ -305,6 +331,9 @@ impl SimWorld {
         for building in self.buildings.values() {
             for port in &building.ports {
                 if port.tile != tile {
+                    continue;
+                }
+                if port.surface_z != surface_z {
                     continue;
                 }
                 if !port.accepts.is_empty() && !port.accepts.contains(&stack.kind) {
@@ -351,7 +380,7 @@ impl SimWorld {
                 }
             }
         }
-        candidates.extend(self.footprint_inventory_drop_candidates(tile, stack));
+        candidates.extend(self.footprint_inventory_drop_candidates(tile, surface_z, stack));
         candidates
     }
 
@@ -388,6 +417,7 @@ impl SimWorld {
     fn inventory_drop_target_exists(
         &self,
         tile: TilePos,
+        surface_z: SurfaceZ,
         stack: CoreItemStack,
         behavior_host: &(impl BehaviorHost + ?Sized),
         behavior_catalog: &BehaviorCatalog,
@@ -397,6 +427,7 @@ impl SimWorld {
                 .ports
                 .iter()
                 .filter(|port| port.tile == tile)
+                .filter(|port| port.surface_z == surface_z)
                 .filter(|port| port.accepts.is_empty() || port.accepts.contains(&stack.kind))
                 .filter(|port| {
                     self.behavior_input_port_accepts(
@@ -428,6 +459,9 @@ impl SimWorld {
         let Some(building) = self.buildings.get(&building_id) else {
             return false;
         };
+        if building.surface_z != surface_z {
+            return false;
+        }
         building.inventories.iter().any(|inventory_id| {
             let Some(record) = self.inventories.get(inventory_id) else {
                 return false;
@@ -442,6 +476,7 @@ impl SimWorld {
     pub(super) fn footprint_inventory_pickup_candidates(
         &self,
         tile: TilePos,
+        surface_z: SurfaceZ,
     ) -> Vec<InserterCandidate> {
         let Some(building_id) = self.building_occupancy.get(&tile).copied() else {
             return Vec::new();
@@ -449,6 +484,9 @@ impl SimWorld {
         let Some(building) = self.buildings.get(&building_id) else {
             return Vec::new();
         };
+        if building.surface_z != surface_z {
+            return Vec::new();
+        }
         building
             .inventories
             .iter()
@@ -480,6 +518,7 @@ impl SimWorld {
     pub(super) fn footprint_inventory_drop_candidates(
         &self,
         tile: TilePos,
+        surface_z: SurfaceZ,
         stack: CoreItemStack,
     ) -> Vec<InserterCandidate> {
         let Some(building_id) = self.building_occupancy.get(&tile).copied() else {
@@ -488,6 +527,9 @@ impl SimWorld {
         let Some(building) = self.buildings.get(&building_id) else {
             return Vec::new();
         };
+        if building.surface_z != surface_z {
+            return Vec::new();
+        }
         let item_rules = InventoryItemRules::from_catalog(&self.catalog);
         building
             .inventories
@@ -542,9 +584,16 @@ impl SimWorld {
         &self,
         tile: TilePos,
         inserter_origin: TilePos,
+        surface_z: SurfaceZ,
     ) -> Vec<InserterCandidate> {
         let mut candidates = Vec::new();
         for line_tile in self.belt_line_tiles_for_port(tile) {
+            let Some(belt) = self.topology_graph.belt(line_tile) else {
+                continue;
+            };
+            if belt.surface_z != surface_z {
+                continue;
+            }
             let Some((line_id, slot, min_distance, max_distance)) =
                 self.line_window_for_tile(line_tile)
             else {
@@ -554,9 +603,8 @@ impl SimWorld {
                 continue;
             };
             let source_side = direction_between_adjacent(line_tile, inserter_origin);
-            let preferred_lane = self.topology_graph.belt(line_tile).and_then(|belt| {
-                source_side.and_then(|side| belt.direction.near_lane_for_source_side(side))
-            });
+            let preferred_lane =
+                source_side.and_then(|side| belt.direction.near_lane_for_source_side(side));
             for lane in 0..2 {
                 if line
                     .lane_positions_in_range(lane, min_distance, max_distance)
@@ -617,9 +665,16 @@ impl SimWorld {
         tile: TilePos,
         item: ItemKindId,
         inserter_origin: TilePos,
+        surface_z: SurfaceZ,
     ) -> Vec<InserterCandidate> {
         let mut candidates = Vec::new();
         for line_tile in self.belt_line_tiles_for_port(tile) {
+            let Some(belt) = self.topology_graph.belt(line_tile) else {
+                continue;
+            };
+            if belt.surface_z != surface_z {
+                continue;
+            }
             let Some((line_id, slot, min_distance, max_distance)) =
                 self.line_window_for_tile(line_tile)
             else {
@@ -629,13 +684,9 @@ impl SimWorld {
                 continue;
             };
             let source_side = direction_between_adjacent(line_tile, inserter_origin);
-            let belt_direction = self
-                .topology_graph
-                .belt(line_tile)
-                .map(|belt| belt.direction);
-            let preferred_lane = belt_direction.and_then(|direction| {
-                source_side.and_then(|side| direction.near_lane_for_source_side(side))
-            });
+            let belt_direction = Some(belt.direction);
+            let preferred_lane =
+                source_side.and_then(|side| belt.direction.near_lane_for_source_side(side));
             for lane in 0..2 {
                 let mut line = line.clone();
                 if !insert_belt_item_from_side(

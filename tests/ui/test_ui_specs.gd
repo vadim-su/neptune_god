@@ -1,5 +1,45 @@
 extends "res://tests/ui/ui_test_base.gd"
 
+const CatalogRegistryScript := preload("res://bootstrap/catalog_registry.gd")
+const BuildingRendererScript := preload("res://game/buildings/building_renderer.gd")
+
+
+class AssetCatalogPaths:
+	const PATHS := {
+		"items": ["res://assets/catalog/items.json"],
+		"recipes": ["res://assets/catalog/recipes.json"],
+		"buildings": ["res://assets/catalog/buildings.json"],
+		"terrain": ["res://assets/catalog/terrain.json"],
+		"player": ["res://assets/catalog/player.json"],
+		"resources": ["res://assets/catalog/resources.json"],
+		"worldgen": ["res://assets/catalog/worldgen.json"],
+	}
+
+	func catalog_paths(catalog_kind: String) -> Array[String]:
+		var paths: Array[String] = []
+		for raw_path: Variant in PATHS.get(catalog_kind, []):
+			paths.append(str(raw_path))
+		return paths
+
+
+func _load_asset_catalog_registry() -> RefCounted:
+	var registry = CatalogRegistryScript.new()
+	assert_true(registry.load_from_mod_registry(AssetCatalogPaths.new()))
+	return registry
+
+
+func _configure_asset_sim(sim: NeptuneSim, registry: RefCounted) -> void:
+	assert_true(sim.configure_catalogs(
+		registry.rows("items"),
+		registry.rows("recipes"),
+		registry.rows("buildings"),
+		registry.rows("terrain"),
+		registry.rows("player"),
+		registry.rows("resources"),
+		registry.rows("worldgen")
+	))
+
+
 func test_dev_console_controller_handles_status_items_and_unknown_commands() -> void:
 	var console = add_child_autoqfree(FakeDevConsole.new())
 	var sim := FakeDevConsoleSim.new()
@@ -550,6 +590,117 @@ func test_main_scene_has_top_right_fps_label() -> void:
 	main_scene.free()
 
 
+func test_main_scene_has_simulation_speed_controls() -> void:
+	var main_scene = load("res://game/main/main.tscn").instantiate()
+	var panel := main_scene.get_node("Hud/SimulationSpeedPanel") as PanelContainer
+	var down_button := main_scene.get_node("Hud/SimulationSpeedPanel/SimulationSpeedControls/SimulationSpeedDownButton") as Button
+	var speed_label := main_scene.get_node("Hud/SimulationSpeedPanel/SimulationSpeedControls/SimulationSpeedLabel") as Label
+	var up_button := main_scene.get_node("Hud/SimulationSpeedPanel/SimulationSpeedControls/SimulationSpeedUpButton") as Button
+
+	assert_not_null(panel)
+	assert_not_null(down_button)
+	assert_not_null(speed_label)
+	assert_not_null(up_button)
+	assert_eq(down_button.text, "-")
+	assert_eq(speed_label.text, "TPS: 60")
+	assert_eq(up_button.text, "+")
+
+	main_scene.free()
+
+
+func test_main_scene_has_day_night_lighting_nodes() -> void:
+	var main_scene = load("res://game/main/main.tscn").instantiate()
+	var sun := main_scene.get_node("Sun") as DirectionalLight3D
+	var sky_fill := main_scene.get_node("SkyFill") as DirectionalLight3D
+	var world_environment := main_scene.get_node("WorldEnvironment") as WorldEnvironment
+
+	assert_not_null(sun)
+	assert_not_null(sky_fill)
+	assert_not_null(world_environment)
+	assert_not_null(world_environment.environment)
+
+	main_scene.free()
+
+
+func test_main_advances_simulation_at_default_sixty_ticks_per_second() -> void:
+	var main = autofree(MainScript.new())
+	var sim := FakeSimulationClockSim.new()
+	main.sim = sim
+
+	main._advance_simulation(1.0 / 120.0)
+	assert_eq(sim.tick_many_calls, [])
+
+	main._advance_simulation(1.0 / 120.0)
+	assert_eq(sim.tick_many_calls, [1])
+
+	main._advance_simulation(0.5)
+	assert_eq(sim.tick_many_calls, [1, 30])
+
+
+func test_main_simulation_speed_buttons_clamp_and_pause_ticks() -> void:
+	var main = autofree(MainScript.new())
+	var sim := FakeSimulationClockSim.new()
+	var label = autofree(Label.new())
+	main.sim = sim
+	main.simulation_speed_label = label
+
+	for _index in range(4):
+		main._decrease_simulation_speed()
+
+	assert_eq(main.simulation_ticks_per_second, 0)
+	assert_eq(label.text, "TPS: 0")
+	main._advance_simulation(1.0)
+	assert_eq(sim.tick_many_calls, [])
+
+	main._increase_simulation_speed()
+	main._advance_simulation(1.0)
+
+	assert_eq(main.simulation_ticks_per_second, 15)
+	assert_eq(label.text, "TPS: 15")
+	assert_eq(sim.tick_many_calls, [15])
+
+
+func test_main_day_night_lighting_matches_core_time_and_solar_factor() -> void:
+	var main = autofree(MainScript.new())
+	var render_environment := Environment.new()
+	main.sun = autofree(DirectionalLight3D.new())
+	main.sky_fill = autofree(DirectionalLight3D.new())
+	main.world_environment = autofree(WorldEnvironment.new())
+	main.world_environment.environment = render_environment
+
+	main._apply_celestial_lighting(0.5, 1.0)
+
+	assert_gt(main.sun.position.y, 40.0)
+	assert_gt(main.sun.light_energy, 2.0)
+	assert_gt(render_environment.ambient_light_energy, 0.3)
+	assert_gt(render_environment.fog_light_energy, 0.2)
+
+	main._apply_celestial_lighting(0.0, 0.0)
+
+	assert_lt(main.sun.position.y, -40.0)
+	assert_lt(main.sun.light_energy, 0.1)
+	assert_lt(render_environment.ambient_light_energy, 0.2)
+	assert_lt(render_environment.fog_light_energy, 0.1)
+
+
+func test_main_simulation_tick_refreshes_celestial_lighting_from_sim() -> void:
+	var main = autofree(MainScript.new())
+	var sim := FakeSimulationClockSim.new()
+	main.sim = sim
+	main.sun = autofree(DirectionalLight3D.new())
+	main.sky_fill = autofree(DirectionalLight3D.new())
+	main.world_environment = autofree(WorldEnvironment.new())
+	main.world_environment.environment = Environment.new()
+	sim.time_of_day = 0.0
+	sim.solar_factor_value = 0.0
+
+	main._advance_simulation(1.0 / 60.0)
+
+	assert_eq(sim.tick_many_calls, [1])
+	assert_lt(main.sun.position.y, -40.0)
+	assert_lt(main.sun.light_energy, 0.1)
+
+
 func test_fps_counter_scene_updates_fps_label_text() -> void:
 	var fps_counter = autofree(FpsCounterScene.instantiate())
 	add_child(fps_counter)
@@ -558,6 +709,70 @@ func test_fps_counter_scene_updates_fps_label_text() -> void:
 
 	assert_eq(fps_counter.label.text, "FPS: 60")
 	assert_eq(FpsCounterScript.format_text(12.2), "FPS: 12")
+
+
+func test_asset_catalog_miner_can_place_on_generated_resource_tile() -> void:
+	var registry := _load_asset_catalog_registry()
+	var sim := NeptuneSim.new()
+	_configure_asset_sim(sim, registry)
+	sim.generate_starting_map(48)
+
+	var resource_tiles: Array = []
+	for raw_tile: Variant in sim.map_tiles():
+		var tile: Dictionary = raw_tile
+		if not str(tile.get("resource", "")).is_empty() and int(tile.get("amount", 0)) > 0:
+			resource_tiles.append(tile)
+
+	assert_gt(resource_tiles.size(), 0)
+	var valid_origin := Vector2i(999999, 999999)
+	for tile: Dictionary in resource_tiles:
+		var origin := Vector2i(int(tile["x"]), int(tile["y"]))
+		if sim.can_place_building("basic_miner", origin.x, origin.y, 0):
+			valid_origin = origin
+			break
+
+	assert_ne(valid_origin, Vector2i(999999, 999999))
+
+
+func test_building_renderer_draws_asset_catalog_fallback_building_footprint() -> void:
+	var registry := _load_asset_catalog_registry()
+	BuildingCatalogScript.load_from_rows(registry.rows("buildings"))
+	var sim := NeptuneSim.new()
+	_configure_asset_sim(sim, registry)
+	assert_true(sim.place_building("wooden_chest", 0, 0, 0))
+
+	var buildings_root := add_child_autoqfree(Node3D.new()) as Node3D
+	var tile_index := {}
+	var blocked_tiles := {}
+
+	BuildingRendererScript.render_from_sim(sim, buildings_root, tile_index, blocked_tiles)
+
+	assert_eq(buildings_root.get_child_count(), 1)
+	var building_node := buildings_root.get_child(0) as Node3D
+	assert_gt(building_node.get_child_count(), 0)
+	assert_true(building_node.get_child(0) is MeshInstance3D)
+	assert_true(tile_index.has(Vector2i(0, 0)))
+	assert_true(blocked_tiles.has(Vector2i(0, 0)))
+
+
+func test_main_render_buildings_uses_godot_buildings_bridge() -> void:
+	var registry := _load_asset_catalog_registry()
+	BuildingCatalogScript.load_from_rows(registry.rows("buildings"))
+	var sim := NeptuneSim.new()
+	_configure_asset_sim(sim, registry)
+	assert_true(sim.place_building("wooden_chest", 0, 0, 0))
+
+	var main = autofree(MainScript.new())
+	main.sim = sim
+	main.buildings_root = add_child_autoqfree(Node3D.new()) as Node3D
+	main.building_tile_index = {}
+	main.blocked_building_tiles = {}
+
+	main._render_buildings_from_sim()
+
+	assert_eq(main.buildings_root.get_child_count(), 1)
+	assert_true(main.building_tile_index.has(Vector2i(0, 0)))
+	assert_true(main.blocked_building_tiles.has(Vector2i(0, 0)))
 
 
 func test_player_zone_overlay_hides_while_fullscreen_map_is_open() -> void:
@@ -596,7 +811,7 @@ func test_player_zone_overlay_scene_follows_player_and_uses_visibility_provider(
 func test_build_ghost_scene_renders_and_hides_preview_tiles() -> void:
 	var build_ghost = add_child_autoqfree(BuildGhostScene.instantiate())
 	var footprint: Array = [
-		{"x": 2, "y": -1},
+		{"x": 2, "y": -1, "surface_z": 2},
 		{"x": 3, "y": -1},
 	]
 
@@ -605,8 +820,17 @@ func test_build_ghost_scene_renders_and_hides_preview_tiles() -> void:
 	assert_true(build_ghost.visible)
 	assert_eq(build_ghost.get_child_count(), 2)
 	var first_tile := build_ghost.get_child(0) as MeshInstance3D
-	assert_eq(first_tile.position, Vector3(2.0, build_ghost.BUILD_GHOST_Y, -1.0))
+	assert_eq(
+		first_tile.position,
+		Vector3(
+			2.0,
+			build_ghost.BUILD_GHOST_Y + 2.0 * build_ghost.SURFACE_LEVEL_HEIGHT,
+			-1.0
+		)
+	)
 	assert_eq((first_tile.material_override as StandardMaterial3D).albedo_color, build_ghost.GHOST_VALID_COLOR)
+	var base_tile := build_ghost.get_child(1) as MeshInstance3D
+	assert_eq(base_tile.position, Vector3(3.0, build_ghost.BUILD_GHOST_Y, -1.0))
 
 	build_ghost.show_footprint([{"x": 4, "y": 5}], false)
 
